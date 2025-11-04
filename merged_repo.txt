@@ -1,0 +1,2288 @@
+
+
+=== FILE: check.py ===
+
+import pandas as pd
+df = pd.read_csv("data/XAUUSD_M5.csv", parse_dates=["time"])
+print("bars rows:", len(df), "from:", df["time"].min(), "to:", df["time"].max())
+print(df.tail(3))
+
+=== FILE: config.yaml ===
+
+symbol: "GOLD.pro"
+timeframe: "M5"
+history_days: 720
+window: 128
+
+mt5:
+  bars_chunk: 100000
+  update_days: 60
+files:
+  bars_csv: "data/XAUUSD_M5.csv"
+  ticks_csv: "data/XAUUSD_ticks_sample.csv"
+  features_csv: "data/XAUUSD_M5_features.csv"
+  model_path: "models/ppo_xauusd_m5.zip"
+  vecnorm_path: "models/vecnorm_xauusd_m5.pkl"
+
+costs:
+  spread_abs: 0.05
+  commission_rate: 0.0001
+  slippage_k: 0.10
+
+env:
+  reward_mode: "pct"
+  flip_penalty: 0.002
+  trade_hours_utc: ["06:00", "20:00"]
+  enforce_flat_outside_hours: true
+  min_equity: 0.8
+
+=== FILE: env_xau.py ===
+
+# -*- coding: utf-8 -*-
+import numpy as np, pandas as pd
+import gymnasium as gym
+from gymnasium import spaces
+from datetime import time as dtime
+
+class XauTradingEnv(gym.Env):
+    metadata = {"render_modes": []}
+
+    def __init__(self, df: pd.DataFrame, window=128,
+                 spread_abs=0.05, commission_rate=0.0001, slippage_k=0.10,
+                 reward_mode: str = "pct", use_close_norm: bool = True,
+                 flip_penalty: float = 0.0, trade_hours_utc=None,
+                 enforce_flat_outside_hours: bool = True, features_spec: list | None = None,
+                 min_equity: float = 0.8):
+        super().__init__()
+        self.df = df.sort_values('time').reset_index(drop=True)
+        self.window = int(window)
+        self.spread_abs = float(spread_abs)
+        self.commission_rate = float(commission_rate)
+        self.slippage_k = float(slippage_k)
+        assert reward_mode in {"pct","points"}
+        self.reward_mode = reward_mode
+        self.use_close_norm = use_close_norm
+        self.flip_penalty = float(flip_penalty)
+        self.enforce_flat_outside = bool(enforce_flat_outside_hours)
+        self.min_equity = float(min_equity)
+
+        # Okno godzin handlu (UTC)
+        self.trade_hours = None
+        if trade_hours_utc and isinstance(trade_hours_utc, (list, tuple)) and len(trade_hours_utc) == 2:
+            try:
+                s = [int(x) for x in str(trade_hours_utc[0]).split(":")]
+                e = [int(x) for x in str(trade_hours_utc[1]).split(":")]
+                self.trade_hours = (dtime(s[0], s[1] if len(s) > 1 else 0),
+                                    dtime(e[0], e[1] if len(e) > 1 else 0))
+            except Exception:
+                self.trade_hours = None
+
+        # Kolumny cech
+        base_cols = ['open', 'high', 'low', 'close', 'tick_volume', 'spread', 'time']
+        if features_spec is not None:
+            missing = [c for c in features_spec if c not in self.df.columns]
+            if missing:
+                raise ValueError(f"Missing feature columns: {missing}")
+            self.feat_cols = list(features_spec)
+        else:
+            self.feat_cols = [c for c in self.df.columns if c not in base_cols]
+
+        self.price_col = 'close_norm' if (self.use_close_norm and 'close_norm' in self.df.columns) else 'close'
+        if len(self.df) <= self.window:
+            raise ValueError(f"Not enough rows: {len(self.df)} <= window {self.window}")
+
+        # Observation: [window x (1 + n_features)] + [pos, unrealized]
+        obs_dim = self.window * (1 + len(self.feat_cols)) + 2
+        self.action_space = spaces.Discrete(3)  # 0=SHORT, 1=FLAT, 2=LONG
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
+
+        # Stan początkowy
+        self._start = self.window
+        self._i = None
+        self.pos = 0
+        self.entry = None
+        self.equity = 1.0
+        self.prev_eq = 1.0
+
+    def _in_trade_hours(self, ts) -> bool:
+        if self.trade_hours is None:
+            return True
+        try:
+            t = ts.to_pydatetime().time()
+        except Exception:
+            t = ts
+        start, end = self.trade_hours
+        if start <= end:
+            return (t >= start) and (t <= end)
+        # okno nocne np. 22:00–06:00
+        return (t >= start) or (t <= end)
+
+    def _obs(self):
+        sl = slice(self._i - self.window, self._i)
+        block_df = self.df.iloc[sl][[self.price_col] + self.feat_cols]
+        block = block_df.to_numpy(dtype=np.float32)
+        expected = 1 + len(self.feat_cols)
+        if block.shape != (self.window, expected):
+            raise RuntimeError(f"Bad window shape: {block.shape} vs {(self.window, expected)}")
+        flat = block.flatten()
+
+        price = float(self.df.iloc[self._i]['close'])
+        unreal = 0.0
+        if self.pos != 0 and self.entry is not None:
+            dir_ = 1 if self.pos > 0 else -1
+            unreal = dir_ * (price - self.entry)
+
+        return np.concatenate([flat, np.array([self.pos, unreal], dtype=np.float32)])
+
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+        self._i = self._start
+        self.pos = 0
+        self.entry = None
+        self.equity = 1.0
+        self.prev_eq = 1.0
+        return self._obs(), {}
+
+    def step(self, action):
+        if isinstance(action, (np.ndarray, list, tuple)):
+            action = int(action[0])
+        else:
+            action = int(action)
+        if not self.action_space.contains(action):
+            raise ValueError("Invalid action")
+
+        info = {}
+        ts = self.df.iloc[self._i]['time']
+        inside = self._in_trade_hours(ts)
+        price = float(self.df.iloc[self._i]['close'])
+        prev = float(self.df.iloc[self._i - 1]['close'])
+        slip = self.slippage_k * abs(price - prev)
+
+        desired = [-1, 0, 1][action]
+        if not inside and self.enforce_flat_outside:
+            desired = 0
+
+        # Zmiana pozycji (koszty + ewentualny flip penalty)
+        if desired != self.pos:
+            # flip penalty gdy odwracasz kierunek bez przejścia na 0
+            if self.pos != 0 and desired != 0 and np.sign(self.pos) != np.sign(desired) and self.flip_penalty > 0:
+                if self.reward_mode == 'pct':
+                    self.equity *= max(1.0 - self.flip_penalty, 1e-6)
+                else:
+                    self.equity -= self.flip_penalty
+                info['flip_penalty'] = float(self.flip_penalty)
+
+            # koszt zamknięcia starej pozycji
+            if self.pos != 0 and self.entry is not None:
+                cost = (self.spread_abs + slip) / max(price, 1e-12) + self.commission_rate
+                if self.reward_mode == 'pct':
+                    self.equity *= max(1.0 - cost, 1e-6)
+                else:
+                    self.equity -= cost
+
+            # otwórz nową (lub wyzeruj)
+            self.pos = desired
+            if self.pos != 0:
+                cost = (self.spread_abs + slip) / max(price, 1e-12) + self.commission_rate
+                if self.reward_mode == 'pct':
+                    self.equity *= max(1.0 - cost, 1e-6)
+                else:
+                    self.equity -= cost
+                self.entry = price
+            else:
+                self.entry = None
+
+        # Zmiana equity w kroku
+        if self.reward_mode == 'pct':
+            step_ret = 0.0
+            if self.pos != 0:
+                dir_ = 1 if self.pos > 0 else -1
+                step_ret = dir_ * ((price / max(prev, 1e-12)) - 1.0)
+            self.equity *= (1.0 + step_ret)
+            reward = float(self.equity - self.prev_eq)
+        else:
+            reward = float(self.equity - self.prev_eq)
+
+        self.prev_eq = self.equity
+        self._i += 1
+
+        terminated = bool(self._i >= len(self.df) - 1)
+        truncated = False
+        if self.equity <= self.min_equity:
+            truncated = True
+            info['early_stop'] = True
+
+        info.update({
+            'time': ts,
+            'price': price,
+            'pos': int(self.pos),
+            'equity': float(self.equity),
+            'inside_hours': bool(inside)
+        })
+        return self._obs(), reward, terminated, truncated, info
+
+=== FILE: features_check.py ===
+
+import pandas as pd
+
+df = pd.read_csv("data/XAUUSD_M5_features.csv", parse_dates=["time"])
+print("features rows:", len(df), "from:", df["time"].min(), "to:", df["time"].max())
+print(df.tail(3))
+
+=== FILE: fetch__mt5_data.py ===
+
+# -*- coding: utf-8 -*-
+"""
+Fetch M5 bars & 24h tick sample from MT5 (demo/real).
+- Utrzymuje ~keep_days (np. 720) dni historii (inkrementalne dobijanie + przycinanie).
+- Atomiczne zapisy CSV.
+- Weekend-safe ticki (ostrzeżenie zamiast błędu).
+- Obejścia dla brokerów z 'Invalid params' na copy_rates_range:
+  * daty 'naive' (bez tzinfo),
+  * fallback do copy_rates_from_pos (tail od końca),
+  * chunkowanie przy pierwszym pobraniu.
+"""
+
+import MetaTrader5 as mt5
+import pandas as pd
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+import numpy as np
+import time
+import yaml
+
+# nasze utilsy
+from utils.atomic import atomic_write_csv
+from utils.mt5_health import ensure_mt5_ready
+
+
+# -------------------------
+# Konfiguracja / walidacja
+# -------------------------
+CFG_PATH = 'config.yaml'
+cfg = yaml.safe_load(open(CFG_PATH, 'r', encoding='utf-8'))
+if not isinstance(cfg, dict) or 'files' not in cfg:
+    raise RuntimeError(f"{CFG_PATH} jest pusty lub ma złą strukturę (brak sekcji 'files').")
+
+SYMBOL     = cfg.get('symbol', 'XAUUSD')
+BARS_CSV   = cfg['files']['bars_csv']
+TICKS_CSV  = cfg['files']['ticks_csv']
+HISTORY_DAYS = int(cfg.get('history_days', 720))
+
+TF_MAP  = {'M1': mt5.TIMEFRAME_M1, 'M5': mt5.TIMEFRAME_M5, 'M15': mt5.TIMEFRAME_M15}
+TF_NAME = cfg.get('timeframe', 'M5')
+TF      = TF_MAP.get(TF_NAME, mt5.TIMEFRAME_M5)
+
+MT5_CFG     = cfg.get('mt5', {}) or {}
+CHUNK       = int(MT5_CFG.get('bars_chunk', 20000))   # 20k ~ 70–90 dni na M5 (zależnie od brokera)
+UPDATE_DAYS = int(MT5_CFG.get('update_days', 60))
+
+
+# -------------------------
+# MT5 init / symbol utils
+# -------------------------
+def init_mt5():
+    """Initialize MT5 and print short info about terminal/account."""
+    if not ensure_mt5_ready():
+        last_err = mt5.last_error()
+        raise RuntimeError(f"MT5 not ready (terminal/account). Start MT5 and login. last_error={last_err}")
+
+    term = mt5.terminal_info()
+    acc  = mt5.account_info()
+    parts = []
+    if getattr(term, "company", None): parts.append(f"Company={term.company}")
+    if getattr(term, "name", None):    parts.append(f"TerminalName={term.name}")
+    if getattr(acc, "login", 0):       parts.append(f"Login={acc.login}")
+    if getattr(acc, "server", None):   parts.append(f"Server={acc.server}")
+    if getattr(acc, "name", None):     parts.append(f"AccountName={acc.name}")
+    print("[MT5] " + " | ".join(parts) if parts else "[MT5] initialized")
+
+
+def ensure_symbol(symbol: str) -> bool:
+    """Upewnij się, że symbol jest widoczny w Market Watch."""
+    info = mt5.symbol_info(symbol)
+    if info is None:
+        mt5.symbol_select(symbol, True)
+        info = mt5.symbol_info(symbol)
+    if info is None:
+        return False
+    if not info.visible:
+        if not mt5.symbol_select(symbol, True):
+            return False
+    return True
+
+
+def suggest_similar(symbol: str, limit=12):
+    """Podpowiedz nazwy symboli powiązanych z GOLD/XAU (serwer‑specyficzne)."""
+    out = []
+    for s in mt5.symbols_get():
+        nm = s.name.upper()
+        if ("GOLD" in nm) or ("XAU" in nm):
+            out.append(s.name)
+    if not out:
+        out = [s.name for s in mt5.symbols_get()[:limit]]
+    return sorted(set(out))[:limit]
+
+
+# -------------------------
+# Pomocnicze
+# -------------------------
+def with_retries(fn, attempts=3, sleep_s=2, *a, **kw):
+    last = None
+    for i in range(attempts):
+        try:
+            return fn(*a, **kw)
+        except Exception as e:
+            last = e
+            time.sleep(sleep_s * (i + 1))
+    if last:
+        raise last
+
+
+def _to_df(rates) -> pd.DataFrame:
+    df = pd.DataFrame(rates)
+    if df.empty:
+        return df
+    df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
+    if 'real_volume' in df.columns:
+        df.rename(columns={'real_volume': 'tick_volume'}, inplace=True)
+    cols = ['time', 'open', 'high', 'low', 'close', 'tick_volume', 'spread']
+    return df[cols].sort_values('time').drop_duplicates('time')
+
+
+def _make_naive(dt: datetime) -> datetime:
+    """Zwróć 'naive' datetime (bez tzinfo) – część brokerów tego wymaga dla copy_rates_range."""
+    if dt.tzinfo is not None:
+        return dt.replace(tzinfo=None)
+    return dt
+
+
+# -------------------------
+# Pobieranie danych
+# -------------------------
+def fetch_range(symbol, timeframe, utc_from: datetime, utc_to: datetime) -> pd.DataFrame:
+    """
+    Range z obejściami:
+      - daty 'naive' (bez tzinfo),
+      - fallback: tail od końca jeśli range zwróci pustkę/Invalid params.
+    """
+    frm_n = _make_naive(utc_from)
+    to_n  = _make_naive(utc_to)
+
+    rates = mt5.copy_rates_range(symbol, timeframe, frm_n, to_n)
+    if rates is None or len(rates) == 0:
+        # fallback: tail od końca
+        tail = mt5.copy_rates_from_pos(symbol, timeframe, 0, CHUNK)
+        if tail is None or len(tail) == 0:
+            last_err = mt5.last_error()
+            raise RuntimeError(f"copy_rates_range empty for '{symbol}'. last_error={last_err}")
+        return _to_df(tail)
+    return _to_df(rates)
+
+
+def fetch_from_pos_tail(symbol, timeframe, count) -> pd.DataFrame:
+    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, count)
+    if rates is None or len(rates) == 0:
+        last_err = mt5.last_error()
+        raise RuntimeError(f"copy_rates_from_pos empty for '{symbol}'. last_error={last_err}")
+    return _to_df(rates)
+
+
+def load_existing_bars(path: str):
+    p = Path(path)
+    if not p.exists():
+        return None
+    try:
+        df = pd.read_csv(p, parse_dates=['time'])
+        if df.empty:
+            return None
+        return df.sort_values('time').drop_duplicates('time').reset_index(drop=True)
+    except Exception:
+        return None
+
+
+def merge_clip(existing: pd.DataFrame | None, new_df: pd.DataFrame, keep_days: int) -> pd.DataFrame:
+    if existing is None or existing.empty:
+        base = new_df.copy()
+    else:
+        base = (
+            pd.concat([existing, new_df], ignore_index=True)
+              .drop_duplicates('time')
+              .sort_values('time')
+        )
+    cutoff = datetime.now(timezone.utc) - timedelta(days=keep_days + 1)
+    base = base[base['time'] >= pd.Timestamp(cutoff)]
+    return base.reset_index(drop=True)
+
+
+def fetch_bars_incremental(symbol, timeframe, keep_days: int, update_days: int) -> pd.DataFrame:
+    """
+    Strategia:
+      * Gdy brak pliku – zbierzemy historię 'od końca' (copy_rates_from_pos) w 1–4 chunkach,
+        aż pokryjemy ~keep_days (z marginesem). Jeśli to się nie uda – spróbujemy krótkiego range.
+      * Gdy plik istnieje – dociągniemy ostatnie update_days (mały range z fallbackiem).
+    """
+    existing = load_existing_bars(BARS_CSV)
+
+    if existing is None:
+        wanted_days = keep_days + 2
+        parts_df = None
+
+        # 1–4 podejścia z narastającą liczbą świec (od końca)
+        for i in range(1, 5):
+            count = CHUNK * i
+            try:
+                dft = with_retries(lambda: fetch_from_pos_tail(symbol, timeframe, count))
+            except Exception:
+                # jeżeli tail zwróci pustkę (czasem zaraz po zalogowaniu) – krótka pauza i spróbuj dalej
+                time.sleep(1.0)
+                continue
+
+            if dft is not None and len(dft) > 0:
+                parts_df = dft
+                span_days = (parts_df['time'].max() - parts_df['time'].min()).days
+                if span_days >= wanted_days:
+                    break
+
+        if parts_df is None or parts_df.empty:
+            # Ostatnia próba – krótki range (np. 60 dni)
+            to  = datetime.utcnow()
+            frm = to - timedelta(days=min(60, wanted_days))
+            parts_df = fetch_range(symbol, timeframe, frm, to)
+
+        return merge_clip(None, parts_df, keep_days)
+
+    # inkrementalnie: dociągnij update_days (mały range z fallbackiem)
+    to  = datetime.utcnow()
+    frm = to - timedelta(days=max(2, update_days))
+    fresh = fetch_range(symbol, timeframe, frm, to)
+    merged = merge_clip(existing, fresh, keep_days)
+    return merged
+
+
+def fetch_ticks(symbol: str, hours: int = 24) -> pd.DataFrame:
+    utc_to   = datetime.now(timezone.utc)
+    utc_from = utc_to - timedelta(hours=hours)
+    ticks = mt5.copy_ticks_range(symbol, utc_from, utc_to, mt5.COPY_TICKS_ALL)
+    if ticks is None or len(ticks) == 0:
+        last_err = mt5.last_error()
+        raise RuntimeError(f"No MT5 ticks for '{symbol}'. last_error={last_err}")
+    tdf = pd.DataFrame(ticks)
+    tdf['time'] = pd.to_datetime(tdf['time'], unit='s', utc=True)
+    return tdf[['time', 'bid', 'ask', 'last', 'volume']]
+
+
+def suggest_costs(tdf: pd.DataFrame) -> dict:
+    spr = (tdf['ask'] - tdf['bid']).astype(float).replace([np.inf, -np.inf], np.nan).dropna()
+    med_spread = float(np.median(spr)) if len(spr) else 0.0
+    p75_spread = float(np.percentile(spr, 75)) if len(spr) else 0.0
+
+    mid = (tdf['ask'] + tdf['bid']) / 2.0
+    dm  = (mid.diff().abs()).replace([np.inf, -np.inf], np.nan).dropna()
+    med_dm    = float(np.median(dm)) if len(dm) else 0.0
+    med_price = float(np.nanmedian(mid)) if len(mid) else 1.0
+    slippage_k = float(min(max(med_dm / max(med_price, 1e-12), 0.0), 0.01))
+    return {
+        'spread_abs_median':       round(med_spread, 5),
+        'spread_abs_p75':          round(p75_spread, 5),
+        'slippage_k_suggested':    round(slippage_k, 4)
+    }
+
+
+# -------------------------
+# Main
+# -------------------------
+def main():
+    init_mt5()
+    try:
+        print(f"[CFG] symbol={SYMBOL} tf={TF_NAME} keep_days={HISTORY_DAYS} update_days={UPDATE_DAYS}")
+
+        if not ensure_symbol(SYMBOL):
+            similar = suggest_similar(SYMBOL)
+            raise SystemExit(
+                "Symbol not found or not visible in Market Watch: '{}'\n"
+                "Try one of these (server-specific): {}\n"
+                "Also open Symbols window and SHOW the instrument."
+                .format(SYMBOL, ", ".join(similar))
+            )
+
+        # ŚWIECE
+        bars = fetch_bars_incremental(SYMBOL, TF, keep_days=HISTORY_DAYS, update_days=UPDATE_DAYS)
+        assert {'time', 'open', 'high', 'low', 'close'}.issubset(bars.columns), "Bars frame malformed"
+        assert len(bars) > 100, "Too few bars"
+        atomic_write_csv(bars, BARS_CSV)
+        print(f"Saved bars: {BARS_CSV} ({len(bars)})")
+
+        # TICKI (opcjonalnie; weekend-safe)
+        try:
+            ticks = with_retries(lambda: fetch_ticks(SYMBOL, hours=24))
+            atomic_write_csv(ticks, TICKS_CSV)
+            print(f"Saved ticks: {TICKS_CSV} ({len(ticks)})")
+
+            sugg = suggest_costs(ticks)
+            Path('reports').mkdir(parents=True, exist_ok=True)
+            Path('reports/costs_suggestion.yaml').write_text(
+                yaml.safe_dump(sugg, allow_unicode=True, sort_keys=False),
+                encoding='utf-8'
+            )
+            print("Cost suggestions -> reports/costs_suggestion.yaml")
+
+        except Exception as e:
+            # np. weekend: brak ticków (OK)
+            print(f"[warn] ticks unavailable ({e}); keeping previous {TICKS_CSV}")
+
+    finally:
+        mt5.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+
+=== FILE: merged_repo.txt ===
+
+
+
+=== FILE: check.py ===
+
+import pandas as pd
+df = pd.read_csv("data/XAUUSD_M5.csv", parse_dates=["time"])
+print("bars rows:", len(df), "from:", df["time"].min(), "to:", df["time"].max())
+print(df.tail(3))
+
+=== FILE: config.yaml ===
+
+symbol: "GOLD.pro"
+timeframe: "M5"
+history_days: 720
+window: 128
+
+mt5:
+  bars_chunk: 100000
+  update_days: 60
+files:
+  bars_csv: "data/XAUUSD_M5.csv"
+  ticks_csv: "data/XAUUSD_ticks_sample.csv"
+  features_csv: "data/XAUUSD_M5_features.csv"
+  model_path: "models/ppo_xauusd_m5.zip"
+  vecnorm_path: "models/vecnorm_xauusd_m5.pkl"
+
+costs:
+  spread_abs: 0.05
+  commission_rate: 0.0001
+  slippage_k: 0.10
+
+env:
+  reward_mode: "pct"
+  flip_penalty: 0.002
+  trade_hours_utc: ["06:00", "20:00"]
+  enforce_flat_outside_hours: true
+  min_equity: 0.8
+
+=== FILE: env_xau.py ===
+
+# -*- coding: utf-8 -*-
+import numpy as np, pandas as pd
+import gymnasium as gym
+from gymnasium import spaces
+from datetime import time as dtime
+
+class XauTradingEnv(gym.Env):
+    metadata = {"render_modes": []}
+
+    def __init__(self, df: pd.DataFrame, window=128,
+                 spread_abs=0.05, commission_rate=0.0001, slippage_k=0.10,
+                 reward_mode: str = "pct", use_close_norm: bool = True,
+                 flip_penalty: float = 0.0, trade_hours_utc=None,
+                 enforce_flat_outside_hours: bool = True, features_spec: list | None = None,
+                 min_equity: float = 0.8):
+        super().__init__()
+        self.df = df.sort_values('time').reset_index(drop=True)
+        self.window = int(window)
+        self.spread_abs = float(spread_abs)
+        self.commission_rate = float(commission_rate)
+        self.slippage_k = float(slippage_k)
+        assert reward_mode in {"pct","points"}
+        self.reward_mode = reward_mode
+        self.use_close_norm = use_close_norm
+        self.flip_penalty = float(flip_penalty)
+        self.enforce_flat_outside = bool(enforce_flat_outside_hours)
+        self.min_equity = float(min_equity)
+
+        # Okno godzin handlu (UTC)
+        self.trade_hours = None
+        if trade_hours_utc and isinstance(trade_hours_utc, (list, tuple)) and len(trade_hours_utc) == 2:
+            try:
+                s = [int(x) for x in str(trade_hours_utc[0]).split(":")]
+                e = [int(x) for x in str(trade_hours_utc[1]).split(":")]
+                self.trade_hours = (dtime(s[0], s[1] if len(s) > 1 else 0),
+                                    dtime(e[0], e[1] if len(e) > 1 else 0))
+            except Exception:
+                self.trade_hours = None
+
+        # Kolumny cech
+        base_cols = ['open', 'high', 'low', 'close', 'tick_volume', 'spread', 'time']
+        if features_spec is not None:
+            missing = [c for c in features_spec if c not in self.df.columns]
+            if missing:
+                raise ValueError(f"Missing feature columns: {missing}")
+            self.feat_cols = list(features_spec)
+        else:
+            self.feat_cols = [c for c in self.df.columns if c not in base_cols]
+
+        self.price_col = 'close_norm' if (self.use_close_norm and 'close_norm' in self.df.columns) else 'close'
+        if len(self.df) <= self.window:
+            raise ValueError(f"Not enough rows: {len(self.df)} <= window {self.window}")
+
+        # Observation: [window x (1 + n_features)] + [pos, unrealized]
+        obs_dim = self.window * (1 + len(self.feat_cols)) + 2
+        self.action_space = spaces.Discrete(3)  # 0=SHORT, 1=FLAT, 2=LONG
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
+
+        # Stan poczÄ…tkowy
+        self._start = self.window
+        self._i = None
+        self.pos = 0
+        self.entry = None
+        self.equity = 1.0
+        self.prev_eq = 1.0
+
+    def _in_trade_hours(self, ts) -> bool:
+        if self.trade_hours is None:
+            return True
+        try:
+            t = ts.to_pydatetime().time()
+        except Exception:
+            t = ts
+        start, end = self.trade_hours
+        if start <= end:
+            return (t >= start) and (t <= end)
+        # okno nocne np. 22:00â€“06:00
+        return (t >= start) or (t <= end)
+
+    def _obs(self):
+        sl = slice(self._i - self.window, self._i)
+        block_df = self.df.iloc[sl][[self.price_col] + self.feat_cols]
+        block = block_df.to_numpy(dtype=np.float32)
+        expected = 1 + len(self.feat_cols)
+        if block.shape != (self.window, expected):
+            raise RuntimeError(f"Bad window shape: {block.shape} vs {(self.window, expected)}")
+        flat = block.flatten()
+
+        price = float(self.df.iloc[self._i]['close'])
+        unreal = 0.0
+        if self.pos != 0 and self.entry is not None:
+            dir_ = 1 if self.pos > 0 else -1
+            unreal = dir_ * (price - self.entry)
+
+        return np.concatenate([flat, np.array([self.pos, unreal], dtype=np.float32)])
+
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+        self._i = self._start
+        self.pos = 0
+        self.entry = None
+        self.equity = 1.0
+        self.prev_eq = 1.0
+        return self._obs(), {}
+
+    def step(self, action):
+        if isinstance(action, (np.ndarray, list, tuple)):
+            action = int(action[0])
+        else:
+            action = int(action)
+        if not self.action_space.contains(action):
+            raise ValueError("Invalid action")
+
+        info = {}
+        ts = self.df.iloc[self._i]['time']
+        inside = self._in_trade_hours(ts)
+        price = float(self.df.iloc[self._i]['close'])
+        prev = float(self.df.iloc[self._i - 1]['close'])
+        slip = self.slippage_k * abs(price - prev)
+
+        desired = [-1, 0, 1][action]
+        if not inside and self.enforce_flat_outside:
+            desired = 0
+
+        # Zmiana pozycji (koszty + ewentualny flip penalty)
+        if desired != self.pos:
+            # flip penalty gdy odwracasz kierunek bez przejÅ›cia na 0
+            if self.pos != 0 and desired != 0 and np.sign(self.pos) != np.sign(desired) and self.flip_penalty > 0:
+                if self.reward_mode == 'pct':
+                    self.equity *= max(1.0 - self.flip_penalty, 1e-6)
+                else:
+                    self.equity -= self.flip_penalty
+                info['flip_penalty'] = float(self.flip_penalty)
+
+            # koszt zamkniÄ™cia starej pozycji
+            if self.pos != 0 and self.entry is not None:
+                cost = (self.spread_abs + slip) / max(price, 1e-12) + self.commission_rate
+                if self.reward_mode == 'pct':
+                    self.equity *= max(1.0 - cost, 1e-6)
+                else:
+                    self.equity -= cost
+
+            # otwÃ³rz nowÄ… (lub wyzeruj)
+            self.pos = desired
+            if self.pos != 0:
+                cost = (self.spread_abs + slip) / max(price, 1e-12) + self.commission_rate
+                if self.reward_mode == 'pct':
+                    self.equity *= max(1.0 - cost, 1e-6)
+                else:
+                    self.equity -= cost
+                self.entry = price
+            else:
+                self.entry = None
+
+        # Zmiana equity w kroku
+        if self.reward_mode == 'pct':
+            step_ret = 0.0
+            if self.pos != 0:
+                dir_ = 1 if self.pos > 0 else -1
+                step_ret = dir_ * ((price / max(prev, 1e-12)) - 1.0)
+            self.equity *= (1.0 + step_ret)
+            reward = float(self.equity - self.prev_eq)
+        else:
+            reward = float(self.equity - self.prev_eq)
+
+        self.prev_eq = self.equity
+        self._i += 1
+
+        terminated = bool(self._i >= len(self.df) - 1)
+        truncated = False
+        if self.equity <= self.min_equity:
+            truncated = True
+            info['early_stop'] = True
+
+        info.update({
+            'time': ts,
+            'price': price,
+            'pos': int(self.pos),
+            'equity': float(self.equity),
+            'inside_hours': bool(inside)
+        })
+        return self._obs(), reward, terminated, truncated, info
+
+=== FILE: features_check.py ===
+
+import pandas as pd
+
+df = pd.read_csv("data/XAUUSD_M5_features.csv", parse_dates=["time"])
+print("features rows:", len(df), "from:", df["time"].min(), "to:", df["time"].max())
+print(df.tail(3))
+
+=== FILE: fetch__mt5_data.py ===
+
+# -*- coding: utf-8 -*-
+"""
+Fetch M5 bars & 24h tick sample from MT5 (demo/real).
+- Utrzymuje ~keep_days (np. 720) dni historii (inkrementalne dobijanie + przycinanie).
+- Atomiczne zapisy CSV.
+- Weekend-safe ticki (ostrzeÅ¼enie zamiast bÅ‚Ä™du).
+- ObejÅ›cia dla brokerÃ³w z 'Invalid params' na copy_rates_range:
+  * daty 'naive' (bez tzinfo),
+  * fallback do copy_rates_from_pos (tail od koÅ„ca),
+  * chunkowanie przy pierwszym pobraniu.
+"""
+
+import MetaTrader5 as mt5
+import pandas as pd
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+import numpy as np
+import time
+import yaml
+
+# nasze utilsy
+from utils.atomic import atomic_write_csv
+from utils.mt5_health import ensure_mt5_ready
+
+
+# -------------------------
+# Konfiguracja / walidacja
+# -------------------------
+CFG_PATH = 'config.yaml'
+cfg = yaml.safe_load(open(CFG_PATH, 'r', encoding='utf-8'))
+if not isinstance(cfg, dict) or 'files' not in cfg:
+    raise RuntimeError(f"{CFG_PATH} jest pusty lub ma zÅ‚Ä… strukturÄ™ (brak sekcji 'files').")
+
+SYMBOL     = cfg.get('symbol', 'XAUUSD')
+BARS_CSV   = cfg['files']['bars_csv']
+TICKS_CSV  = cfg['files']['ticks_csv']
+HISTORY_DAYS = int(cfg.get('history_days', 720))
+
+TF_MAP  = {'M1': mt5.TIMEFRAME_M1, 'M5': mt5.TIMEFRAME_M5, 'M15': mt5.TIMEFRAME_M15}
+TF_NAME = cfg.get('timeframe', 'M5')
+TF      = TF_MAP.get(TF_NAME, mt5.TIMEFRAME_M5)
+
+MT5_CFG     = cfg.get('mt5', {}) or {}
+CHUNK       = int(MT5_CFG.get('bars_chunk', 20000))   # 20k ~ 70â€“90 dni na M5 (zaleÅ¼nie od brokera)
+UPDATE_DAYS = int(MT5_CFG.get('update_days', 60))
+
+
+# -------------------------
+# MT5 init / symbol utils
+# -------------------------
+def init_mt5():
+    """Initialize MT5 and print short info about terminal/account."""
+    if not ensure_mt5_ready():
+        last_err = mt5.last_error()
+        raise RuntimeError(f"MT5 not ready (terminal/account). Start MT5 and login. last_error={last_err}")
+
+    term = mt5.terminal_info()
+    acc  = mt5.account_info()
+    parts = []
+    if getattr(term, "company", None): parts.append(f"Company={term.company}")
+    if getattr(term, "name", None):    parts.append(f"TerminalName={term.name}")
+    if getattr(acc, "login", 0):       parts.append(f"Login={acc.login}")
+    if getattr(acc, "server", None):   parts.append(f"Server={acc.server}")
+    if getattr(acc, "name", None):     parts.append(f"AccountName={acc.name}")
+    print("[MT5] " + " | ".join(parts) if parts else "[MT5] initialized")
+
+
+def ensure_symbol(symbol: str) -> bool:
+    """Upewnij siÄ™, Å¼e symbol jest widoczny w Market Watch."""
+    info = mt5.symbol_info(symbol)
+    if info is None:
+        mt5.symbol_select(symbol, True)
+        info = mt5.symbol_info(symbol)
+    if info is None:
+        return False
+    if not info.visible:
+        if not mt5.symbol_select(symbol, True):
+            return False
+    return True
+
+
+def suggest_similar(symbol: str, limit=12):
+    """Podpowiedz nazwy symboli powiÄ…zanych z GOLD/XAU (serwerâ€‘specyficzne)."""
+    out = []
+    for s in mt5.symbols_get():
+        nm = s.name.upper()
+        if ("GOLD" in nm) or ("XAU" in nm):
+            out.append(s.name)
+    if not out:
+        out = [s.name for s in mt5.symbols_get()[:limit]]
+    return sorted(set(out))[:limit]
+
+
+# -------------------------
+# Pomocnicze
+# -------------------------
+def with_retries(fn, attempts=3, sleep_s=2, *a, **kw):
+    last = None
+    for i in range(attempts):
+        try:
+            return fn(*a, **kw)
+        except Exception as e:
+            last = e
+            time.sleep(sleep_s * (i + 1))
+    if last:
+        raise last
+
+
+def _to_df(rates) -> pd.DataFrame:
+    df = pd.DataFrame(rates)
+    if df.empty:
+        return df
+    df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
+    if 'real_volume' in df.columns:
+        df.rename(columns={'real_volume': 'tick_volume'}, inplace=True)
+    cols = ['time', 'open', 'high', 'low', 'close', 'tick_volume', 'spread']
+    return df[cols].sort_values('time').drop_duplicates('time')
+
+
+def _make_naive(dt: datetime) -> datetime:
+    """ZwrÃ³Ä‡ 'naive' datetime (bez tzinfo) â€“ czÄ™Å›Ä‡ brokerÃ³w tego wymaga dla copy_rates_range."""
+    if dt.tzinfo is not None:
+        return dt.replace(tzinfo=None)
+    return dt
+
+
+# -------------------------
+# Pobieranie danych
+# -------------------------
+def fetch_range(symbol, timeframe, utc_from: datetime, utc_to: datetime) -> pd.DataFrame:
+    """
+    Range z obejÅ›ciami:
+      - daty 'naive' (bez tzinfo),
+      - fallback: tail od koÅ„ca jeÅ›li range zwrÃ³ci pustkÄ™/Invalid params.
+    """
+    frm_n = _make_naive(utc_from)
+    to_n  = _make_naive(utc_to)
+
+    rates = mt5.copy_rates_range(symbol, timeframe, frm_n, to_n)
+    if rates is None or len(rates) == 0:
+        # fallback: tail od koÅ„ca
+        tail = mt5.copy_rates_from_pos(symbol, timeframe, 0, CHUNK)
+        if tail is None or len(tail) == 0:
+            last_err = mt5.last_error()
+            raise RuntimeError(f"copy_rates_range empty for '{symbol}'. last_error={last_err}")
+        return _to_df(tail)
+    return _to_df(rates)
+
+
+def fetch_from_pos_tail(symbol, timeframe, count) -> pd.DataFrame:
+    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, count)
+    if rates is None or len(rates) == 0:
+        last_err = mt5.last_error()
+        raise RuntimeError(f"copy_rates_from_pos empty for '{symbol}'. last_error={last_err}")
+    return _to_df(rates)
+
+
+def load_existing_bars(path: str):
+    p = Path(path)
+    if not p.exists():
+        return None
+    try:
+        df = pd.read_csv(p, parse_dates=['time'])
+        if df.empty:
+            return None
+        return df.sort_values('time').drop_duplicates('time').reset_index(drop=True)
+    except Exception:
+        return None
+
+
+def merge_clip(existing: pd.DataFrame | None, new_df: pd.DataFrame, keep_days: int) -> pd.DataFrame:
+    if existing is None or existing.empty:
+        base = new_df.copy()
+    else:
+        base = (
+            pd.concat([existing, new_df], ignore_index=True)
+              .drop_duplicates('time')
+              .sort_values('time')
+        )
+    cutoff = datetime.now(timezone.utc) - timedelta(days=keep_days + 1)
+    base = base[base['time'] >= pd.Timestamp(cutoff)]
+    return base.reset_index(drop=True)
+
+
+def fetch_bars_incremental(symbol, timeframe, keep_days: int, update_days: int) -> pd.DataFrame:
+    """
+    Strategia:
+      * Gdy brak pliku â€“ zbierzemy historiÄ™ 'od koÅ„ca' (copy_rates_from_pos) w 1â€“4 chunkach,
+        aÅ¼ pokryjemy ~keep_days (z marginesem). JeÅ›li to siÄ™ nie uda â€“ sprÃ³bujemy krÃ³tkiego range.
+      * Gdy plik istnieje â€“ dociÄ…gniemy ostatnie update_days (maÅ‚y range z fallbackiem).
+    """
+    existing = load_existing_bars(BARS_CSV)
+
+    if existing is None:
+        wanted_days = keep_days + 2
+        parts_df = None
+
+        # 1â€“4 podejÅ›cia z narastajÄ…cÄ… liczbÄ… Å›wiec (od koÅ„ca)
+        for i in range(1, 5):
+            count = CHUNK * i
+            try:
+                dft = with_retries(lambda: fetch_from_pos_tail(symbol, timeframe, count))
+            except Exception:
+                # jeÅ¼eli tail zwrÃ³ci pustkÄ™ (czasem zaraz po zalogowaniu) â€“ krÃ³tka pauza i sprÃ³buj dalej
+                time.sleep(1.0)
+                continue
+
+            if dft is not None and len(dft) > 0:
+                parts_df = dft
+                span_days = (parts_df['time'].max() - parts_df['time'].min()).days
+                if span_days >= wanted_days:
+                    break
+
+        if parts_df is None or parts_df.empty:
+            # Ostatnia prÃ³ba â€“ krÃ³tki range (np. 60 dni)
+            to  = datetime.utcnow()
+            frm = to - timedelta(days=min(60, wanted_days))
+            parts_df = fetch_range(symbol, timeframe, frm, to)
+
+        return merge_clip(None, parts_df, keep_days)
+
+    # inkrementalnie: dociÄ…gnij update_days (maÅ‚y range z fallbackiem)
+    to  = datetime.utcnow()
+    frm = to - timedelta(days=max(2, update_days))
+    fresh = fetch_range(symbol, timeframe, frm, to)
+    merged = merge_clip(existing, fresh, keep_days)
+    return merged
+
+
+def fetch_ticks(symbol: str, hours: int = 24) -> pd.DataFrame:
+    utc_to   = datetime.now(timezone.utc)
+    utc_from = utc_to - timedelta(hours=hours)
+    ticks = mt5.copy_ticks_range(symbol, utc_from, utc_to, mt5.COPY_TICKS_ALL)
+    if ticks is None or len(ticks) == 0:
+        last_err = mt5.last_error()
+        raise RuntimeError(f"No MT5 ticks for '{symbol}'. last_error={last_err}")
+    tdf = pd.DataFrame(ticks)
+    tdf['time'] = pd.to_datetime(tdf['time'], unit='s', utc=True)
+    return tdf[['time', 'bid', 'ask', 'last', 'volume']]
+
+
+def suggest_costs(tdf: pd.DataFrame) -> dict:
+    spr = (tdf['ask'] - tdf['bid']).astype(float).replace([np.inf, -np.inf], np.nan).dropna()
+    med_spread = float(np.median(spr)) if len(spr) else 0.0
+    p75_spread = float(np.percentile(spr, 75)) if len(spr) else 0.0
+
+    mid = (tdf['ask'] + tdf['bid']) / 2.0
+    dm  = (mid.diff().abs()).replace([np.inf, -np.inf], np.nan).dropna()
+    med_dm    = float(np.median(dm)) if len(dm) else 0.0
+    med_price = float(np.nanmedian(mid)) if len(mid) else 1.0
+    slippage_k = float(min(max(med_dm / max(med_price, 1e-12), 0.0), 0.01))
+    return {
+        'spread_abs_median':       round(med_spread, 5),
+        'spread_abs_p75':          round(p75_spread, 5),
+        'slippage_k_suggested':    round(slippage_k, 4)
+    }
+
+
+# -------------------------
+# Main
+# -------------------------
+def main():
+    init_mt5()
+    try:
+        print(f"[CFG] symbol={SYMBOL} tf={TF_NAME} keep_days={HISTORY_DAYS} update_days={UPDATE_DAYS}")
+
+        if not ensure_symbol(SYMBOL):
+            similar = suggest_similar(SYMBOL)
+            raise SystemExit(
+                "Symbol not found or not visible in Market Watch: '{}'\n"
+                "Try one of these (server-specific): {}\n"
+                "Also open Symbols window and SHOW the instrument."
+                .format(SYMBOL, ", ".join(similar))
+            )
+
+        # ÅšWIECE
+        bars = fetch_bars_incremental(SYMBOL, TF, keep_days=HISTORY_DAYS, update_days=UPDATE_DAYS)
+        assert {'time', 'open', 'high', 'low', 'close'}.issubset(bars.columns), "Bars frame malformed"
+        assert len(bars) > 100, "Too few bars"
+        atomic_write_csv(bars, BARS_CSV)
+        print(f"Saved bars: {BARS_CSV} ({len(bars)})")
+
+        # TICKI (opcjonalnie; weekend-safe)
+        try:
+            ticks = with_retries(lambda: fetch_ticks(SYMBOL, hours=24))
+            atomic_write_csv(ticks, TICKS_CSV)
+            print(f"Saved ticks: {TICKS_CSV} ({len(ticks)})")
+
+            sugg = suggest_costs(ticks)
+            Path('reports').mkdir(parents=True, exist_ok=True)
+            Path('reports/costs_suggestion.yaml').write_text(
+                yaml.safe_dump(sugg, allow_unicode=True, sort_keys=False),
+                encoding='utf-8'
+            )
+            print("Cost suggestions -> reports/costs_suggestion.yaml")
+
+        except Exception as e:
+            # np. weekend: brak tickÃ³w (OK)
+            print(f"[warn] ticks unavailable ({e}); keeping previous {TICKS_CSV}")
+
+    finally:
+        mt5.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+
+=== FILE: merge_repo.py ===
+
+import os
+import chardet
+
+# === KONFIGURACJA ===
+repo_path = r"C:\xau_rl"           # ≈öcie≈ºka do folderu repozytorium
+output_file = "merged_repo.txt"    # Nazwa wynikowego pliku
+
+# Rozszerzenia plik√≥w do do≈ÇƒÖczenia
+included_extensions = (".py", ".ipynb", ".txt", ".md", ".yaml", ".yml")
+
+# Foldery, kt√≥re majƒÖ byƒá pominiƒôte
+excluded_dirs = {".venv", "__pycache__", ".git", ".idea", ".vscode", "build", "dist"}
+
+# === FUNKCJA SCALANIA ===
+with open(output_file, "w", encoding="utf-8") as outfile:
+    for root, dirs, files in os.walk(repo_path):
+        # Pomijaj foldery systemowe / techniczne
+        dirs[:] = [d for d in dirs if d not in excluded_dirs]
+
+        for filename in files:
+            if filename.endswith(included_extensions):
+                file_path = os.path.join(root, filename)
+                try:
+                    # Automatyczne wykrywanie kodowania
+                    with open(file_path, "rb") as raw:
+                        result = chardet.detect(raw.read(4096))
+                        encoding = result["encoding"] or "utf-8"
+
+                    with open(file_path, "r", encoding=encoding, errors="replace") as infile:
+                        relative_path = os.path.relpath(file_path, repo_path)
+                        outfile.write(f"\n\n=== FILE: {relative_path} ===\n\n")
+                        outfile.write(infile.read())
+
+                    print(f"‚úÖ Dodano: {relative_path}")
+
+                except Exception as e:
+                    print(f"‚ö†Ô∏è Nie uda≈Ço siƒô odczytaƒá pliku {filename}: {e}")
+
+print(f"\nüéâ Gotowe! Wszystkie pliki scalono do: {output_file}")
+
+=== FILE: quick_env_test.py ===
+
+import yaml, pandas as pd
+from env_xau import XauTradingEnv
+cfg=yaml.safe_load(open('config.yaml','r',encoding='utf-8'))
+df=pd.read_csv(cfg['files']['features_csv'], parse_dates=['time']).sort_values('time').reset_index(drop=True)
+df=df.tail(max(int(cfg.get('window',128))+256,512))
+env=XauTradingEnv(df, window=int(cfg.get('window',128)),
+    spread_abs=cfg['costs']['spread_abs'], commission_rate=cfg['costs']['commission_rate'], slippage_k=cfg['costs']['slippage_k'],
+    reward_mode=cfg.get('env',{}).get('reward_mode', cfg.get('reward_mode','pct')), use_close_norm=True,
+    min_equity=float(cfg.get('env',{}).get('min_equity',0.8)))
+obs,info=env.reset(); print('reset OK', len(obs))
+obs,r,term,trunc,info=env.step(1); print('step OK', r, term, trunc)
+
+
+=== FILE: README.md ===
+
+# XAUUSD RL PPO (M5) – Starter (Demo/Edu)
+**Uwaga**: tylko do celów edukacyjnych, backtestów i *paper tradingu* (demo). Brak kodu wysyłającego realne zlecenia.
+
+## Szybki start
+```powershell
+python -m venv .venv
+# .\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+# Na końcu zainstaluj TORCH odpowiedni dla CPU/GPU z pytorch.org (wheel).
+python fetch__mt5_data.py
+python utils\calibration.py
+python utils\calibration.py --apply
+python features\build_features.py
+python rl\train_ppo.py --timesteps 1500000
+python rl\evaluate.py --out_dir reports
+python utils\make_report.py
+
+24/7 na Windows
+Użyj skryptów w ops\ oraz NSSM (patrz ops\install_services.ps1).
+Dane i historia
+Trzymamy 720 dni historii świec. Zbieracz działa inkrementalnie: dociąga ostatnie update_days (domyślnie 60), scala z istniejacym CSV i przycina do 720 dni. Zapisy CSV są atomowe.
+
+
+=== FILE: requirements.txt ===
+
+pandas>=2.0
+numpy>=1.24
+pytz
+PyYAML
+joblib
+matplotlib
+tensorboard
+MetaTrader5
+gymnasium>=0.29
+stable-baselines3>=2.2.1
+
+=== FILE: features\build_features.py ===
+
+# -*- coding: utf-8 -*-
+import pandas as pd, numpy as np, yaml, json
+from pathlib import Path
+cfg = yaml.safe_load(open('config.yaml','r',encoding='utf-8'))
+BARS = cfg['files']['bars_csv']; FEAT = cfg['files']['features_csv']
+
+def macd(series, fast=12, slow=26, signal=9):
+    ema_fast = series.ewm(span=fast, adjust=False).mean()
+    ema_slow = series.ewm(span=slow, adjust=False).mean()
+    macd_line = ema_fast - ema_slow
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    return macd_line, signal_line, macd_line - signal_line
+
+def bbands(series, period=20, n_std=2.0):
+    ma = series.rolling(period).mean()
+    sd = series.rolling(period).std()
+    upper = ma + n_std*sd; lower = ma - n_std*sd
+    width = (upper - lower) / (ma.replace(0,np.nan).abs() + 1e-12)
+    return ma, upper, lower, width
+
+def add_features(df):
+    df = df.sort_values('time').reset_index(drop=True)
+    c = df['close']
+    df['ret1'] = np.log(c).diff()
+    df['ema10'] = c.ewm(span=10).mean(); df['ema50']=c.ewm(span=50).mean(); df['ema200']=c.ewm(span=200).mean()
+    d = c.diff(); up=d.clip(lower=0).ewm(alpha=1/14,adjust=False).mean(); down=(-d.clip(upper=0)).ewm(alpha=1/14,adjust=False).mean(); rs=up/(down+1e-12)
+    df['rsi14'] = 100 - (100/(1+rs))
+    h,l,cl = df['high'], df['low'], df['close']
+    tr = np.maximum(h-l, np.maximum((h-cl.shift()).abs(), (l-cl.shift()).abs()))
+    df['atr14'] = tr.ewm(alpha=1/14, adjust=False).mean()
+    m,s,hst = macd(c); df['macd']=m; df['macd_signal']=s; df['macd_hist']=hst
+    bb_ma, bb_up, bb_lo, bb_w = bbands(c); df['bb_ma']=bb_ma; df['bb_up']=bb_up; df['bb_lo']=bb_lo; df['bb_width']=bb_w
+    df['minute']=df['time'].dt.hour*60+df['time'].dt.minute
+    df['tod_sin']=np.sin(2*np.pi*df['minute']/1440); df['tod_cos']=np.cos(2*np.pi*df['minute']/1440); df.drop(columns=['minute'], inplace=True)
+    df['dow']=df['time'].dt.dayofweek
+    df['dow_sin']=np.sin(2*np.pi*df['dow']/7); df['dow_cos']=np.cos(2*np.pi*df['dow']/7); df.drop(columns=['dow'], inplace=True)
+    df['close_log']=np.log(c.clip(lower=1e-12))
+    mu = df['close_log'].rolling(2000, min_periods=200).mean()
+    sd = df['close_log'].rolling(2000, min_periods=200).std().replace(0,np.nan)
+    df['close_norm']=(df['close_log']-mu)/(sd+1e-8)
+    feat_cols=['ret1','ema10','ema50','ema200','rsi14','atr14','macd','macd_signal','macd_hist','bb_ma','bb_up','bb_lo','bb_width','tod_sin','tod_cos','dow_sin','dow_cos']
+    for col in feat_cols:
+        mu = df[col].rolling(2000, min_periods=200).mean()
+        sd = df[col].rolling(2000, min_periods=200).std().replace(0,np.nan)
+        df[col]=(df[col]-mu)/(sd+1e-8)
+    return df.dropna().reset_index(drop=True)
+
+df = pd.read_csv(BARS, parse_dates=['time'])
+df = add_features(df)
+assert len(df) > int(cfg.get('window',128)) + 10, "Too few rows for features"
+Path(FEAT).parent.mkdir(parents=True, exist_ok=True)
+df.to_csv(FEAT, index=False)
+base_cols = ['time','open','high','low','close','tick_volume','spread']
+feature_columns = [c for c in df.columns if c not in base_cols]
+spec = {"feature_columns": feature_columns, "price_column":"close_norm"}
+Path('models').mkdir(parents=True, exist_ok=True)
+Path('models/features_spec.json').write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding='utf-8')
+print("Saved features and features_spec.json")
+
+
+=== FILE: features\__init__.py ===
+
+
+
+=== FILE: ops\promote_challenger.py ===
+
+import json, shutil
+from pathlib import Path
+ROOT = Path(file).resolve().parents[1]
+REG = ROOT / 'models' / 'registry'; REG.mkdir(parents=True, exist_ok=True)
+CUR_TXT = REG / 'current.txt'
+MODEL_DST = ROOT / 'models' / 'ppo_xauusd_m5.zip'
+VEC_DST   = ROOT / 'models' / 'vecnorm_xauusd_m5.pkl'
+def load_metrics(d: Path):
+if not d: return None
+m = d / 'metrics.json'
+return json.loads(m.read_text('utf-8')) if m.exists() else None
+def pick_latest_dir():
+dirs = [p for p in REG.iterdir() if p.is_dir()]
+return sorted(dirs, key=lambda p: p.name)[-1] if dirs else None
+def better(m_new, m_old):
+if m_old is None: return True
+s_new, s_old = m_new.get('sharpe', 0.0) or 0.0, m_old.get('sharpe', 0.0) or 0.0
+dd_new, dd_old = m_new.get('max_dd', -1.0) or -1.0, m_old.get('max_dd', -1.0) or -1.0
+dd_ok = (dd_new >= dd_old * 1.2)
+s_ok  = (s_new >= s_old * 1.10) or (s_new >= 0.10 and s_new > s_old)
+fe_new, fe_old = m_new.get('final_equity', 0.0) or 0.0, m_old.get('final_equity', 0.0) or 0.0
+if (s_new == 0.0 and s_old == 0.0):
+return (fe_new > fe_old) and dd_ok
+return s_ok and dd_ok
+def promote(new_dir: Path):
+REG.mkdir(parents=True, exist_ok=True)
+(REG/'current.txt').write_text(new_dir.name, encoding='utf-8')
+shutil.copy2(new_dir/'model.zip', MODEL_DST)
+if (new_dir/'vecnorm.pkl').exists(): shutil.copy2(new_dir/'vecnorm.pkl', VEC_DST)
+print(f"[promote] Champion -> {new_dir.name}")
+def main():
+latest = pick_latest_dir()
+if latest is None: print('[promote] No candidates.'); return
+new_m = load_metrics(latest)
+if new_m is None: print('[promote] Latest has no metrics.json'); return
+cur_dir = REG / CUR_TXT.read_text('utf-8').strip() if CUR_TXT.exists() else None
+old_m = load_metrics(cur_dir) if cur_dir and cur_dir.exists() else None
+if better(new_m, old_m): promote(latest)
+else: print('[promote] Challenger not better. No promotion.')
+if name == 'main': main()
+
+
+=== FILE: ops\save_candidate.py ===
+
+import json, shutil
+from pathlib import Path
+ROOT = Path(file).resolve().parents[1]
+REG = ROOT / 'models' / 'registry'; REG.mkdir(parents=True, exist_ok=True)
+MODEL = ROOT / 'models' / 'ppo_xauusd_m5.zip'
+VEC   = ROOT / 'models' / 'vecnorm_xauusd_m5.pkl'
+METR  = ROOT / 'reports' / 'val_metrics.txt'
+EQP   = ROOT / 'reports' / 'equity_val.png'
+def parse_metrics_txt(p: Path):
+d = {}
+if p.exists():
+txt = p.read_text(encoding='utf-8')
+for line in txt.splitlines():
+if ':' in line:
+k, v = line.split(':', 1)
+k = k.strip().lower().replace(' ', '')
+try: d[k] = float(v.strip())
+except: pass
+return d
+def main():
+m = parse_metrics_txt(METR)
+if not m:
+print('[save_candidate] No metrics.'); return
+tag = 'cand' + Path.cwd().name + '_'
+n=0
+while (REG / f"{tag}{n:02d}").exists(): n+=1
+dst = REG / f"{tag}{n:02d}"
+dst.mkdir(parents=True, exist_ok=True)
+shutil.copy2(MODEL, dst/'model.zip')
+if VEC.exists(): shutil.copy2(VEC, dst/'vecnorm.pkl')
+if EQP.exists(): shutil.copy2(EQP, dst/'equity.png')
+(dst/'metrics.json').write_text(json.dumps({
+'final_equity': m.get('final_equity'),
+'max_dd': m.get('max_drawdown'),
+'sharpe': m.get('sharpe_daily'),
+}, indent=2), encoding='utf-8')
+print(f'[save_candidate] Saved candidate -> {dst}')
+if name == 'main': main()
+
+
+=== FILE: paper_demo\paper_loop_mt5_demo.py ===
+
+# -*- coding: utf-8 -*-
+import MetaTrader5 as mt5
+import pandas as pd, numpy as np, yaml, time, logging, json
+from pathlib import Path
+from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from utils.mt5_health import ensure_mt5_ready
+
+logging.basicConfig(filename='paper_demo/paper_trading.log', level=logging.INFO,
+                    format='%(asctime)s %(levelname)s %(message)s')
+
+cfg = yaml.safe_load(open('config.yaml','r',encoding='utf-8'))
+SYMBOL = cfg['symbol']; WINDOW=int(cfg.get('window',128))
+MODEL_PATH = cfg['files']['model_path']; VECNORM_PATH = cfg.get('files',{}).get('vecnorm_path','models/vecnorm_xauusd_m5.pkl')
+TF_MAP={'M1': mt5.TIMEFRAME_M1,'M5': mt5.TIMEFRAME_M5,'M15': mt5.TIMEFRAME_M15}; TF_NAME = cfg.get('timeframe','M5'); TF = TF_MAP.get(TF_NAME, mt5.TIMEFRAME_M5)
+
+features_spec=None; fs=Path('models/features_spec.json')
+if fs.exists(): features_spec=json.loads(fs.read_text(encoding='utf-8')).get('feature_columns', None)
+
+def add_features_incremental(df: pd.DataFrame)->pd.DataFrame:
+    df=df.sort_values('time').reset_index(drop=True)
+    df['ret1']=np.log(df['close']).diff()
+    df['ema10']=df['close'].ewm(span=10).mean(); df['ema50']=df['close'].ewm(span=50).mean(); df['ema200']=df['close'].ewm(span=200).mean()
+    d=df['close'].diff(); up=d.clip(lower=0).ewm(alpha=1/14,adjust=False).mean(); down=(-d.clip(upper=0)).ewm(alpha=1/14,adjust=False).mean(); rs=up/(down+1e-12)
+    df['rsi14']=100-(100/(1+rs))
+    h,l,c=df['high'],df['low'],df['close']; tr=np.maximum(h-l, np.maximum(abs(h-c.shift()), abs(l-c.shift())))
+    df['atr14']=tr.ewm(alpha=1/14,adjust=False).mean()
+    ema_fast=df['close'].ewm(span=12,adjust=False).mean(); ema_slow=df['close'].ewm(span=26,adjust=False).mean(); macd_line=ema_fast-ema_slow; signal_line=macd_line.ewm(span=9,adjust=False).mean()
+    df['macd']=macd_line; df['macd_signal']=signal_line; df['macd_hist']=macd_line-signal_line
+    ma=df['close'].rolling(20).mean(); sd=df['close'].rolling(20).std()
+    df['bb_ma']=ma; df['bb_up']=ma+2*sd; df['bb_lo']=ma-2*sd; df['bb_width']=(df['bb_up']-df['bb_lo'])/(ma.replace(0,np.nan).abs()+1e-12)
+    df['minute']=df['time'].dt.hour*60+df['time'].dt.minute; df['tod_sin']=np.sin(2*np.pi*df['minute']/1440); df['tod_cos']=np.cos(2*np.pi*df['minute']/1440); df.drop(columns=['minute'], inplace=True)
+    df['dow']=df['time'].dt.dayofweek; df['dow_sin']=np.sin(2*np.pi*df['dow']/7); df['dow_cos']=np.cos(2*np.pi*df['dow']/7); df.drop(columns=['dow'], inplace=True)
+    df['close_log']=np.log(df['close'].clip(lower=1e-12)); mu=df['close_log'].rolling(2000,min_periods=200).mean(); s=df['close_log'].rolling(2000,min_periods=200).std().replace(0,np.nan)
+    df['close_norm']=(df['close_log']-mu)/(s+1e-8)
+    norm=['ret1','ema10','ema50','ema200','rsi14','atr14','macd','macd_signal','macd_hist','bb_ma','bb_up','bb_lo','bb_width','tod_sin','tod_cos','dow_sin','dow_cos']
+    for c in norm:
+        mu=df[c].rolling(2000,min_periods=200).mean(); s=df[c].rolling(2000,min_periods=200).std().replace(0,np.nan); df[c]=(df[c]-mu)/(s+1e-8)
+    return df.dropna().reset_index(drop=True)
+
+def get_last_bars(symbol, timeframe, n:int):
+    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, n)
+    if rates is None or len(rates)<n: return None
+    df=pd.DataFrame(rates); df['time']=pd.to_datetime(df['time'], unit='s', utc=True); df.rename(columns={'real_volume':'tick_volume'}, inplace=True)
+    return df[['time','open','high','low','close','tick_volume','spread']]
+
+def build_obs(df_feat: pd.DataFrame, model_obs_dim: int)->np.ndarray:
+    per_step=(model_obs_dim-2)//WINDOW
+    price_col='close_norm' if 'close_norm' in df_feat.columns else 'close'
+    if features_spec is None:
+        base=['open','high','low','close','tick_volume','spread','time']; feat_cols=[c for c in df_feat.columns if c not in base]
+    else:
+        feat_cols=[c for c in features_spec if c in df_feat.columns]
+    tail=df_feat.tail(WINDOW); block=tail[[price_col]+feat_cols].to_numpy(dtype=np.float32)
+    if block.shape!=(WINDOW, per_step): raise RuntimeError(f"Bad block {block.shape} vs {(WINDOW, per_step)}")
+    flat=block.flatten(); import numpy as np
+    return np.concatenate([flat, np.array([0.0,0.0],dtype=np.float32)])
+
+def main():
+    if not ensure_mt5_ready(): raise RuntimeError("MT5 not ready (terminal/account). Start MT5 and login to a demo account.")
+    try:
+        model = PPO.load(MODEL_PATH); expected_dim=int(model.observation_space.shape[0]); assert (expected_dim-2)%WINDOW==0
+        vecnorm=None
+        if Path(VECNORM_PATH).exists():
+            from gymnasium import spaces
+            class _ObsOnlyEnv:
+                def __init__(self, obs_dim):
+                    self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
+                    self.action_space = spaces.Discrete(3)
+                def reset(self, *, seed=None, options=None):
+                    import numpy as np; return np.zeros(self.observation_space.shape, dtype=np.float32), {}
+                def step(self, action):
+                    import numpy as np; return np.zeros(self.observation_space.shape, dtype=np.float32), 0.0, True, False, {}
+            dummy=DummyVecEnv([lambda: _ObsOnlyEnv(expected_dim)])
+            vecnorm=VecNormalize.load(VECNORM_PATH, dummy); vecnorm.training=False; vecnorm.norm_reward=False
+
+        Path('paper_demo').mkdir(parents=True, exist_ok=True)
+        csv=Path('paper_demo/decisions.csv'); if not csv.exists(): csv.write_text('time_utc,price,action_id,action_label\n', encoding='utf-8')
+
+        last_ts=None; hb_t=time.time()
+        while True:
+            bars=get_last_bars(SYMBOL, TF, n=WINDOW+800)
+            if bars is None or len(bars)<WINDOW+200: time.sleep(5); continue
+            feat=add_features_incremental(bars)
+            if len(feat)<WINDOW: time.sleep(5); continue
+            cur_ts=feat['time'].iloc[-1]
+            if last_ts is not None and cur_ts==last_ts: time.sleep(2); continue
+            obs=build_obs(feat, expected_dim)
+            if vecnorm is not None:
+                import numpy as np; obs=vecnorm.normalize_obs(obs.reshape(1,-1)).reshape(-1)
+            action,_=model.predict(obs, deterministic=True)
+            decision={0:'SHORT',1:'FLAT',2:'LONG'}[int(action)]
+            price=float(feat['close'].iloc[-1]); msg=f"DECISION {decision} @ {price:.2f} (ts={cur_ts})"
+            print(msg); logging.info(msg)
+            with open(csv,'a',encoding='utf-8') as f: f.write(f"{cur_ts},{price:.5f},{int(action)},{decision}\n")
+            last_ts=cur_ts
+            if time.time()-hb_t>600: logging.info(f"[HB] {SYMBOL} {TF_NAME} last_ts={cur_ts} price={price:.2f}"); hb_t=time.time()
+            time.sleep(30)
+    finally:
+        mt5.shutdown()
+
+if __name__ == '__main__': main()
+
+
+=== FILE: paper_demo\simulate_execution.py ===
+
+# -*- coding: utf-8 -*-
+import yaml, pandas as pd
+from env_xau import XauTradingEnv
+from stable_baselines3 import PPO
+from pathlib import Path
+
+cfg = yaml.safe_load(open('config.yaml','r',encoding='utf-8'))
+FEAT = cfg['files']['features_csv']
+MODEL_PATH = cfg['files']['model_path']
+WINDOW = int(cfg.get('window',128))
+COSTS = cfg['costs']
+
+df = pd.read_csv(FEAT, parse_dates=['time'])
+cut = df['time'].max() - pd.Timedelta(days=120)
+sim = df[df['time']>=cut].copy()
+
+env = XauTradingEnv(sim, window=WINDOW, spread_abs=COSTS['spread_abs'], commission_rate=COSTS['commission_rate'], slippage_k=COSTS['slippage_k'])
+obs, info = env.reset(); model = PPO.load(MODEL_PATH)
+rows=[]; done=False
+while not done:
+    action,_=model.predict(obs, deterministic=True)
+    obs, reward, terminated, truncated, info = env.step(action)
+    done = bool(terminated) or bool(truncated)
+    rows.append({'time': info.get('time',None), 'price': info.get('price',None), 'action': int(action), 'reward': float(reward), 'equity': float(env.equity)})
+Path('reports').mkdir(parents=True, exist_ok=True)
+pd.DataFrame(rows).to_csv('reports/trace_simulated.csv', index=False)
+pd.Series([r['equity'] for r in rows]).to_csv('reports/equity_simulated.csv', index=False)
+print('Saved simulated trace/equity.')
+
+
+=== FILE: paper_demo\__init__.py ===
+
+
+
+=== FILE: reports\costs_suggestion.yaml ===
+
+spread_abs_median: 0.5
+spread_abs_p75: 0.58
+slippage_k_suggested: 0.0
+
+
+=== FILE: reports\report.txt ===
+
+# RL Validation Report (XAUUSD M5)
+Date: 2025-11-04 08:39:32
+
+## Base metrics
+
+Final equity: 1.000000
+Min equity: 0.995518
+Max drawdown: -0.108857
+
+
+## Extra metrics from equity
+- Steps: 3000
+- Sharpe (daily): 0.020
+- Sortino (daily): 0.012
+- Daily vol: 0.0345
+- CAGR (est.): 1.157%
+- MaxDD: -10.89%
+- Calmar: 0.106
+
+
+=== FILE: reports\val_metrics.txt ===
+
+Final equity: 1.000000
+Min equity: 0.995518
+Max drawdown: -0.108857
+
+
+=== FILE: rl\evaluate.py ===
+
+# -*- coding: utf-8 -*-
+import argparse, yaml, json
+import pandas as pd, numpy as np
+import matplotlib.pyplot as plt
+from pathlib import Path
+from gymnasium.wrappers import TimeLimit
+from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize, VecMonitor
+from env_xau import XauTradingEnv
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--max_eval_steps', type=int, default=3000)
+parser.add_argument('--out_dir', type=str, default='reports')
+args = parser.parse_args()
+
+OUT = Path(args.out_dir); OUT.mkdir(parents=True, exist_ok=True)
+
+cfg = yaml.safe_load(open('config.yaml','r',encoding='utf-8'))
+FEAT = cfg['files']['features_csv']
+MODEL_PATH = cfg['files']['model_path']
+VECNORM_PATH = cfg.get('files',{}).get('vecnorm_path','models/vecnorm_xauusd_m5.pkl')
+WINDOW = int(cfg.get('window',128))
+COSTS = cfg['costs']
+ENV_CFG = cfg.get('env',{})
+REWARD_MODE = ENV_CFG.get('reward_mode', cfg.get('reward_mode','pct'))
+MIN_EQ = float(ENV_CFG.get('min_equity', 0.8))
+
+df = pd.read_csv(FEAT, parse_dates=['time'])
+cut_val = df['time'].max() - pd.Timedelta(days=120)
+val = df[df['time']>=cut_val].copy()
+
+features_spec = None
+fspec = Path('models/features_spec.json')
+if fspec.exists():
+    features_spec = json.loads(fspec.read_text(encoding='utf-8')).get('feature_columns', None)
+
+def make_eval():
+    env = XauTradingEnv(val, window=WINDOW,
+        spread_abs=COSTS['spread_abs'], commission_rate=COSTS['commission_rate'], slippage_k=COSTS['slippage_k'],
+        reward_mode=REWARD_MODE, use_close_norm=True, features_spec=features_spec, min_equity=MIN_EQ)
+    return TimeLimit(env, max_episode_steps=args.max_eval_steps)
+
+venv = DummyVecEnv([make_eval]); venv = VecMonitor(venv)
+if Path(VECNORM_PATH).exists():
+    venv = VecNormalize.load(VECNORM_PATH, venv); venv.training=False; venv.norm_reward=False
+model = PPO.load(MODEL_PATH, env=venv)
+
+obs = venv.reset(); eq=[]; rows=[]; done=False
+while not done:
+    action,_ = model.predict(obs, deterministic=True)
+    obs, rewards, dones, infos = venv.step(action)
+    equity = venv.get_attr('equity', indices=0)[0]
+    eq.append(float(equity))
+    info0 = infos[0] if isinstance(infos,(list,tuple)) else infos
+    rows.append({'time': str(info0.get('time','')), 'price': info0.get('price',np.nan), 'pos': info0.get('pos',np.nan),
+                 'equity': equity, 'action': int(action[0]) if hasattr(action,'__len__') else int(action)})
+    done = bool(dones[0])
+
+s = pd.Series(eq)
+final_eq = float(s.iloc[-1]); min_eq=float(s.min()); peak=s.cummax(); max_dd=float((s/peak-1.0).min())
+plt.figure(figsize=(10,4)); plt.plot(s.values); plt.title('Equity (validation)'); plt.tight_layout()
+plt.savefig((OUT/'equity_val.png').as_posix(), dpi=150)
+(OUT/'val_metrics.txt').write_text(
+    f"Final equity: {final_eq:.6f}\nMin equity: {min_eq:.6f}\nMax drawdown: {max_dd:.6f}\n", encoding='utf-8')
+pd.DataFrame(rows).to_csv(OUT/'eval_trace.csv', index=False)
+print("Saved validation results.")
+
+
+=== FILE: rl\train_ppo.py ===
+
+# -*- coding: utf-8 -*-
+import argparse, yaml, json
+import pandas as pd
+from pathlib import Path
+from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize, VecMonitor, sync_envs_normalization
+from stable_baselines3.common.callbacks import EvalCallback
+from stable_baselines3.common.utils import set_random_seed
+from gymnasium.wrappers import TimeLimit
+from env_xau import XauTradingEnv
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--timesteps', type=int, default=1500000)
+parser.add_argument('--seed', type=int, default=42)
+parser.add_argument('--eval_freq', type=int, default=100000)
+parser.add_argument('--n_eval_episodes', type=int, default=1)
+parser.add_argument('--max_train_steps', type=int, default=6000)
+parser.add_argument('--max_eval_steps', type=int, default=3000)
+args = parser.parse_args()
+
+cfg = yaml.safe_load(open('config.yaml','r',encoding='utf-8'))
+FEAT = cfg['files']['features_csv']
+MODEL_PATH = Path(cfg['files']['model_path'])
+VECNORM_PATH = Path(cfg.get('files',{}).get('vecnorm_path','models/vecnorm_xauusd_m5.pkl'))
+WINDOW = int(cfg.get('window',128))
+COSTS = cfg['costs']
+ENV_CFG = cfg.get('env',{})
+REWARD_MODE = ENV_CFG.get('reward_mode', cfg.get('reward_mode','pct'))
+FLIP_PENALTY = float(ENV_CFG.get('flip_penalty', cfg.get('flip_penalty',0.0)))
+TRADE_HOURS = ENV_CFG.get('trade_hours_utc', cfg.get('trade_hours_utc', None))
+MIN_EQ = float(ENV_CFG.get('min_equity', 0.8))
+
+df = pd.read_csv(FEAT, parse_dates=['time'])
+cut_val = df['time'].max() - pd.Timedelta(days=30)
+train_df = df[df['time'] < cut_val].copy()
+val_df   = df[df['time'] >= cut_val].copy()
+
+features_spec = None
+fspec = Path('models/features_spec.json')
+if fspec.exists():
+    features_spec = json.loads(fspec.read_text(encoding='utf-8')).get('feature_columns', None)
+
+set_random_seed(args.seed)
+
+def make_train():
+    env = XauTradingEnv(train_df, window=WINDOW,
+        spread_abs=COSTS['spread_abs'], commission_rate=COSTS['commission_rate'], slippage_k=COSTS['slippage_k'],
+        reward_mode=REWARD_MODE, use_close_norm=True, flip_penalty=FLIP_PENALTY, trade_hours_utc=TRADE_HOURS,
+        enforce_flat_outside_hours=True, features_spec=features_spec, min_equity=MIN_EQ)
+    return TimeLimit(env, max_episode_steps=args.max_train_steps)
+
+def make_eval():
+    env = XauTradingEnv(val_df, window=WINDOW,
+        spread_abs=COSTS['spread_abs'], commission_rate=COSTS['commission_rate'], slippage_k=COSTS['slippage_k'],
+        reward_mode=REWARD_MODE, use_close_norm=True, flip_penalty=0.0, trade_hours_utc=TRADE_HOURS,
+        enforce_flat_outside_hours=True, features_spec=features_spec, min_equity=MIN_EQ)
+    return TimeLimit(env, max_episode_steps=args.max_eval_steps)
+
+venv_train = DummyVecEnv([make_train]); venv_train = VecMonitor(venv_train); venv_train = VecNormalize(venv_train, norm_obs=True, norm_reward=True, clip_obs=10.0, clip_reward=10.0)
+venv_eval  = DummyVecEnv([make_eval]);  venv_eval  = VecMonitor(venv_eval);  venv_eval  = VecNormalize(venv_eval, training=False, norm_obs=True, norm_reward=False)
+
+policy_kwargs = dict(net_arch=dict(pi=[128,128], vf=[128,128]))
+try:
+    import tensorboard as _tb
+    tb_log_dir = 'logs/ppo_gold_m5'
+except Exception:
+    tb_log_dir = None
+
+model = PPO('MlpPolicy', venv_train, n_steps=4096, batch_size=256, learning_rate=3e-4, ent_coef=0.02,
+            policy_kwargs=policy_kwargs, seed=args.seed, verbose=1, tensorboard_log=tb_log_dir)
+
+sync_envs_normalization(venv_eval, venv_train)
+eval_cb = EvalCallback(venv_eval, best_model_save_path=str(MODEL_PATH.parent), log_path='logs/eval',
+                       eval_freq=max(args.eval_freq,1), n_eval_episodes=max(args.n_eval_episodes,1),
+                       deterministic=True, render=False)
+
+model.learn(total_timesteps=args.timesteps, callback=eval_cb)
+MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+model.save(str(MODEL_PATH))
+venv_train.save(str(VECNORM_PATH))
+print(f"Saved model: {MODEL_PATH}")
+print(f"Saved VecNormalize: {VECNORM_PATH}")
+
+
+=== FILE: rl\walk_forward.py ===
+
+# -*- coding: utf-8 -*-
+import argparse, yaml, json
+import pandas as pd, numpy as np
+from pathlib import Path
+from gymnasium.wrappers import TimeLimit
+from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize, VecMonitor
+from env_xau import XauTradingEnv
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--segments', type=int, default=6)
+parser.add_argument('--train_days', type=int, default=120)
+parser.add_argument('--val_days', type=int, default=30)
+parser.add_argument('--timesteps', type=int, default=500000)
+parser.add_argument('--seed', type=int, default=42)
+parser.add_argument('--out_dir', type=str, default='reports_wf')
+args = parser.parse_args()
+
+cfg = yaml.safe_load(open('config.yaml','r',encoding='utf-8'))
+FEAT = cfg['files']['features_csv']
+WINDOW = int(cfg.get('window',128))
+COSTS = cfg['costs']
+ENV_CFG = cfg.get('env',{})
+REWARD_MODE = ENV_CFG.get('reward_mode', cfg.get('reward_mode','pct'))
+FLIP_PENALTY = float(ENV_CFG.get('flip_penalty', cfg.get('flip_penalty',0.0)))
+TRADE_HOURS = ENV_CFG.get('trade_hours_utc', cfg.get('trade_hours_utc', None))
+MIN_EQ = float(ENV_CFG.get('min_equity', 0.8))
+
+out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
+df = pd.read_csv(FEAT, parse_dates=['time']).sort_values('time').reset_index(drop=True)
+end_time = df['time'].max()
+
+features_spec=None
+fspec = Path('models/features_spec.json')
+if fspec.exists(): features_spec = json.loads(fspec.read_text(encoding='utf-8')).get('feature_columns', None)
+
+rows=[]
+for k in range(args.segments):
+    val_end = end_time - pd.Timedelta(days=k*args.val_days)
+    val_start = val_end - pd.Timedelta(days=args.val_days)
+    train_end = val_start
+    train_start = train_end - pd.Timedelta(days=args.train_days)
+    tr = df[(df['time']>=train_start)&(df['time']<train_end)].copy()
+    va = df[(df['time']>=val_start)&(df['time']<val_end)].copy()
+    if len(tr)<=WINDOW or len(va)<=WINDOW: continue
+
+    def make_train():
+        env = XauTradingEnv(tr, window=WINDOW, spread_abs=COSTS['spread_abs'], commission_rate=COSTS['commission_rate'], slippage_k=COSTS['slippage_k'],
+            reward_mode=REWARD_MODE, use_close_norm=True, flip_penalty=FLIP_PENALTY, trade_hours_utc=TRADE_HOURS,
+            enforce_flat_outside_hours=True, features_spec=features_spec, min_equity=MIN_EQ)
+        return TimeLimit(env, max_episode_steps=6000)
+
+    def make_eval():
+        env = XauTradingEnv(va, window=WINDOW, spread_abs=COSTS['spread_abs'], commission_rate=COSTS['commission_rate'], slippage_k=COSTS['slippage_k'],
+            reward_mode=REWARD_MODE, use_close_norm=True, flip_penalty=0.0, trade_hours_utc=TRADE_HOURS,
+            enforce_flat_outside_hours=True, features_spec=features_spec, min_equity=MIN_EQ)
+        return TimeLimit(env, max_episode_steps=3000)
+
+    vt = DummyVecEnv([make_train]); vt = VecMonitor(vt); vt = VecNormalize(vt, norm_obs=True, norm_reward=True)
+    ve = DummyVecEnv([make_eval]);  ve = VecMonitor(ve)
+
+    model = PPO('MlpPolicy', vt, n_steps=4096, batch_size=256, learning_rate=3e-4, ent_coef=0.02, seed=args.seed, verbose=0)
+    model.learn(total_timesteps=args.timesteps)
+
+    tmp = out/f'vecnorm_{k}.pkl'; vt.save(str(tmp))
+    ve = VecNormalize.load(str(tmp), ve); ve.training=False; ve.norm_reward=False
+
+    obs = ve.reset(); eq=[]; trace=[]; done=False
+    while not done:
+        action,_=model.predict(obs, deterministic=True)
+        obs, rewards, dones, infos = ve.step(action)
+        equity = ve.get_attr('equity', indices=0)[0]
+        eq.append(float(equity))
+        info0=infos[0] if isinstance(infos,(list,tuple)) else infos
+        trace.append({'k':k,'time':str(info0.get('time','')),'price':info0.get('price',np.nan),'pos':info0.get('pos',np.nan),'equity':equity,
+                      'action':int(action[0]) if hasattr(action,'__len__') else int(action)})
+        done = bool(dones[0])
+
+    s = pd.Series(eq); final_eq=float(s.iloc[-1]); min_eq=float(s.min()); peak=s.cummax(); max_dd=float((s/peak-1.0).min())
+    rows.append({'k':k,'train_start':train_start,'train_end':train_end,'val_start':val_start,'val_end':val_end,'final_eq':final_eq,'min_eq':min_eq,'max_dd':max_dd,'n_steps':int(len(s))})
+    pd.DataFrame(trace).to_csv(out/f'fold_{k}_trace.csv', index=False)
+
+res = pd.DataFrame(rows).sort_values('k'); res.to_csv(out/'wf_results.csv', index=False)
+if res.empty:
+    txt=['# Walk-Forward Report','No results (windows too short?).']
+else:
+    agg={'folds':len(res),'final_eq_med':float(res['final_eq'].median()),'max_dd_med':float(res['max_dd'].median()),'n_steps_sum':int(res['n_steps'].sum())}
+    txt=['# Walk-Forward Report',f"Folds: {agg['folds']}",f"Median Final Equity: {agg['final_eq_med']:.4f}",f"Median MaxDD: {agg['max_dd_med']:.2%}",f"Total steps: {agg['n_steps_sum']}"]
+(out/'wf_report.txt').write_text('\n'.join(txt), encoding='utf-8')
+print("Saved walk-forward results.")
+
+
+=== FILE: rl\__init__.py ===
+
+
+
+=== FILE: utils\atomic.py ===
+
+from pathlib import Path
+
+def atomic_write_csv(df, path: str):
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    df.to_csv(tmp, index=False)
+    tmp.replace(p)
+
+
+=== FILE: utils\calibration.py ===
+
+# -*- coding: utf-8 -*-
+import argparse, yaml, pandas as pd, numpy as np
+from pathlib import Path
+
+parser = argparse.ArgumentParser(); parser.add_argument('--apply', action='store_true'); args=parser.parse_args()
+cfg = yaml.safe_load(open('config.yaml','r',encoding='utf-8'))
+TICKS = cfg['files']['ticks_csv']; BARS = cfg['files']['bars_csv']
+
+ticks = pd.read_csv(TICKS, parse_dates=['time'])
+ticks['spread']=ticks['ask']-ticks['bid']; mid=(ticks['ask']+ticks['bid'])/2.0; dmid=mid.diff().abs()
+spread_median=float(ticks['spread'].median()); spread_p95=float(ticks['spread'].quantile(0.95)); dmid_median=float(dmid.median())
+
+bars=pd.read_csv(BARS, parse_dates=['time']); bar_move_med=float(bars['close'].diff().abs().median())
+slippage_k=float(np.clip(dmid_median/max(bar_move_med,1e-12), 0.0, 0.5))
+
+Path('reports').mkdir(parents=True, exist_ok=True)
+Path('reports/costs_suggestion.yaml').write_text(
+    yaml.safe_dump({'spread_abs_median':round(spread_median,5),'spread_abs_p95':round(spread_p95,5),'slippage_k_suggested':round(slipage_k if False else slippage_k,3)},
+                   allow_unicode=True, sort_keys=False),
+    encoding='utf-8')
+print('_min', type=int, default=5)
+args=parser.parse_args()
+df=pd.read_csv(args.csv, parse_dates=['time']).sort_values('time').reset_index(drop=True)
+print(f"Rows: {len(df)}\nFrom: {df['time'].iloc[0]} To: {df['time'].iloc[-1]}")
+dt=(df['time'].diff().dt.total_seconds()/60).fillna(args.tf_min)
+gaps=df.loc[dt>args.tf_min+0.1,['time']].copy(); gaps['gap_min']=dt[dt>args.tf_min+0.1].values
+print(f"Gaps > {args.tf_min} min: {len(gaps)}")
+if len(gaps): print(gaps.head(10))
+
+
+=== FILE: utils\make_report.py ===
+
+# -*- coding: utf-8 -*-
+import argparse, base64
+from pathlib import Path
+import pandas as pd, numpy as np
+import matplotlib.pyplot as plt
+from datetime import datetime
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--equity_csv', type=str, default='reports/eval_trace.csv')
+parser.add_argument('--metrics', type=str, default='reports/val_metrics.txt')
+parser.add_argument('--figure', type=str, default='reports/equity_val.png')
+parser.add_argument('--out_html', type=str, default='reports/report.html')
+parser.add_argument('--out_txt', type=str, default='reports/report.txt')
+parser.add_argument('--bars_per_day', type=int, default=288)
+parser.add_argument('--trading_days', type=int, default=252)
+args = parser.parse_args()
+
+out_html = Path(args.out_html)
+out_txt  = Path(args.out_txt)
+out_html.parent.mkdir(parents=True, exist_ok=True)
+out_txt.parent.mkdir(parents=True, exist_ok=True)
+
+eq = None
+p = Path(args.equity_csv)
+if p.exists():
+    df = pd.read_csv(p)
+    if 'equity' in df.columns:
+        eq = df['equity'].astype(float).to_numpy()
+    elif df.shape[1] == 1:
+        eq = df.iloc[:, 0].astype(float).to_numpy()
+
+metrics_text = Path(args.metrics).read_text(encoding='utf-8') if Path(args.metrics).exists() else ''
+
+img_b64 = ''
+if Path(args.figure).exists():
+    img_b64 = base64.b64encode(Path(args.figure).read_bytes()).decode('ascii')
+
+# Jeśli nie ma obrazka, wygeneruj go z danych equity
+if not img_b64 and eq is not None and len(eq) > 1:
+    fig, ax = plt.subplots(figsize=(9, 4))
+    ax.plot(eq, color='#0057B8', lw=1.5)
+    ax.set_title('Equity (validation)')
+    ax.set_xlabel('Steps')
+    ax.set_ylabel('Equity')
+    fig.tight_layout()
+    Path(args.figure).parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(args.figure, dpi=144)
+    plt.close(fig)
+    img_b64 = base64.b64encode(Path(args.figure).read_bytes()).decode('ascii')
+
+# Dodatkowe metryki
+extra = {}
+if eq is not None and len(eq) > 2:
+    ret = np.diff(eq) / np.maximum(eq[:-1], 1e-12)
+    mu = float(np.nanmean(ret))
+    sigma = float(np.nanstd(ret) + 1e-12)
+    downside = ret[ret < 0]
+    ds = float(np.nanstd(downside) + 1e-12)
+
+    daily_mu = mu * args.bars_per_day
+    daily_sigma = sigma * (args.bars_per_day ** 0.5)
+    sharpe = daily_mu / (daily_sigma + 1e-12)
+    sortino = daily_mu / (((args.bars_per_day ** 0.5) * ds) + 1e-12)
+
+    n = len(eq)
+    years = max(n / args.bars_per_day / args.trading_days, 1e-6)
+    cagr = (eq[-1] / max(eq[0], 1e-12)) ** (1 / years) - 1 if years > 0 else 0.0
+    peak = np.maximum.accumulate(eq)
+    max_dd = float((eq / peak - 1.0).min())
+    calmar = (cagr / abs(max_dd)) if max_dd < 0 else float('inf')
+
+    extra = dict(
+        n_steps=n,
+        sharpe_daily=sharpe,
+        sortino_daily=sortino,
+        vol_daily=daily_sigma,
+        cagr=cagr,
+        max_dd=max_dd,
+        calmar=calmar
+    )
+
+now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+md = [
+    '# RL Validation Report (XAUUSD M5)',
+    f'Date: {now}',
+    '',
+    '## Base metrics',
+    '',
+    metrics_text.strip() if metrics_text else '(no val_metrics.txt)',
+    '',
+    ''
+]
+
+if extra:
+    md += [
+        '## Extra metrics from equity',
+        f"- Steps: {extra['n_steps']}",
+        f"- Sharpe (daily): {extra['sharpe_daily']:.3f}",
+        f"- Sortino (daily): {extra['sortino_daily']:.3f}",
+        f"- Daily vol: {extra['vol_daily']:.4f}",
+        f"- CAGR (est.): {extra['cagr']:.3%}",
+        f"- MaxDD: {extra['max_dd']:.2%}",
+        f"- Calmar: {extra['calmar']:.3f}",
+    ]
+else:
+    md += ['No equity data.']
+
+out_txt.write_text('\n'.join(md) + '\n', encoding='utf-8')
+
+html = f"""RL Validation
+RL Validation Report (XAUUSD M5)
+Base metrics
+{metrics_text if metrics_text else '(no val_metrics.txt)'}
+Extra metrics
+{('\n'.join(md)) if extra else 'No equity data.'}
+Equity
+{('data:image/png;base64,' + img_b64) if img_b64 else 'No plot.'}
+Generated: {now}
+"""
+out_html.write_text(html, encoding='utf-8')
+print('Saved report.')
+
+=== FILE: utils\mt5_health.py ===
+
+import MetaTrader5 as mt5
+import time
+
+def ensure_mt5_ready(retries=3, sleep_s=2):
+    """Ponawia initialize i weryfikuje, że terminal + konto są gotowe."""
+    for i in range(retries):
+        if mt5.initialize():
+            ti, ai = mt5.terminal_info(), mt5.account_info()
+            if ti and ai and getattr(ai, "login", 0):
+                return True
+            mt5.shutdown()
+        time.sleep(sleep_s * (i + 1))
+    return False
+
+
+=== FILE: utils\qc_bars.py ===
+
+#!/usr/bin/env python
+import pandas as pd, argparse
+parser=argparse.ArgumentParser(); parser.add_argument('--csv', required=True); parser.add_argument('--tf_min', type=int, default=5)
+args=parser.parse_args()
+df=pd.read_csv(args.csv, parse_dates=['time']).sort_values('time').reset_index(drop=True)
+print(f"Rows: {len(df)}\nFrom: {df['time'].iloc[0]} To: {df['time'].iloc[-1]}")
+dt=(df['time'].diff().dt.total_seconds()/60).fillna(args.tf_min)
+gaps=df.loc[dt>args.tf_min+0.1,['time']].copy(); gaps['gap_min']=dt[dt>args.tf_min+0.1].values
+print(f"Gaps > {args.tf_min} min: {len(gaps)}");
+if len(gaps): print(gaps.head(10))
+
+
+=== FILE: utils\time_utils.py ===
+
+from datetime import datetime, timezone
+def now_utc(): return datetime.now(timezone.utc)
+
+
+=== FILE: utils\__init__.py ===
+
+
+
+=== FILE: _backup_py\env_xau.py ===
+
+-- coding: utf-8 --
+import numpy as np, pandas as pd
+import gymnasium as gym
+from gymnasium import spaces
+from datetime import time as dtime
+class XauTradingEnv(gym.Env):
+metadata = {"render_modes": []}
+def init(self, df: pd.DataFrame, window=128,
+spread_abs=0.05, commission_rate=0.0001, slippage_k=0.10,
+reward_mode: str = "pct", use_close_norm: bool = True,
+flip_penalty: float = 0.0, trade_hours_utc=None,
+enforce_flat_outside_hours: bool = True, features_spec: list | None = None,
+min_equity: float = 0.8):
+super().init()
+self.df = df.reset_index(drop=True)
+self.window = int(window)
+self.spread_abs = float(spread_abs)
+self.commission_rate = float(commission_rate)
+self.slippage_k = float(slippage_k)
+assert reward_mode in {"pct","points"}
+self.reward_mode = reward_mode
+self.use_close_norm = use_close_norm
+self.flip_penalty = float(flip_penalty)
+self.enforce_flat_outside = bool(enforce_flat_outside_hours)
+self.min_equity = float(min_equity)
+self.trade_hours = None
+if trade_hours_utc and isinstance(trade_hours_utc,(list,tuple)) and len(trade_hours_utc)==2:
+try:
+s = [int(x) for x in str(trade_hours_utc[0]).split(":")]
+e = [int(x) for x in str(trade_hours_utc[1]).split(":")]
+self.trade_hours = (dtime(s[0], s[1] if len(s)>1 else 0), dtime(e[0], e[1] if len(e)>1 else 0))
+except Exception:
+self.trade_hours = None
+base_cols = ['open','high','low','close','tick_volume','spread','time']
+if features_spec is not None:
+missing = [c for c in features_spec if c not in self.df.columns]
+if missing: raise ValueError(f"Missing feature columns: {missing}")
+self.feat_cols = list(features_spec)
+else:
+self.feat_cols = [c for c in self.df.columns if c not in base_cols]
+self.price_col = 'close_norm' if (self.use_close_norm and 'close_norm' in self.df.columns) else 'close'
+if len(self.df) <= self.window:
+raise ValueError(f"Not enough rows: {len(self.df)} <= window {self.window}")
+obs_dim = self.window * (1 + len(self.feat_cols)) + 2
+self.action_space = spaces.Discrete(3)
+self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32)
+self._start = self.window
+self._i = None
+self.pos = 0
+self.entry = None
+self.equity = 1.0
+self.prev_eq = 1.0
+def _in_trade_hours(self, ts)->bool:
+if self.trade_hours is None: return True
+try: t = ts.to_pydatetime().time()
+except Exception: t = ts
+start, end = self.trade_hours
+if start <= end: return (t>=start) and (t<=end)
+return (t>=start) or (t<=end)
+def _obs(self):
+sl = slice(self._i - self.window, self.i)
+block_df = self.df.iloc[sl][[self.price_col] + self.feat_cols]
+block = block_df.to_numpy(dtype=np.float32)
+expected = 1 + len(self.feat_cols)
+if block.shape != (self.window, expected):
+raise RuntimeError(f"Bad window shape: {block.shape} vs {(self.window, expected)}")
+flat = block.flatten()
+price = float(self.df.iloc[self.i]['close'])
+unreal = 0.0
+if self.pos != 0 and self.entry is not None:
+dir = 1 if self.pos>0 else -1
+unreal = dir * (price - self.entry)
+import numpy as np
+return np.concatenate([flat, np.array([self.pos, unreal], dtype=np.float32)])
+def reset(self, seed=None, options=None):
+super().reset(seed=seed)
+self._i = self._start
+self.pos = 0; self.entry = None
+self.equity = 1.0; self.prev_eq = 1.0
+return self._obs(), {}
+def step(self, action):
+import numpy as np
+if isinstance(action,(np.ndarray,list,tuple)): action = int(action[0])
+else: action = int(action)
+if not self.action_space.contains(action): raise ValueError("Invalid action")
+info = {}
+ts = self.df.iloc[self._i]['time']
+inside = self._in_trade_hours(ts)
+price = float(self.df.iloc[self.i]['close'])
+prev = float(self.df.iloc[self.i-1]['close'])
+slip = self.slippage_k * abs(price - prev)
+desired = [-1,0,1][action]
+if not inside and self.enforce_flat_outside: desired = 0
+if desired != self.pos:
+if self.pos != 0 and desired != 0 and np.sign(self.pos) != np.sign(desired) and self.flip_penalty>0:
+if self.reward_mode == 'pct': self.equity *= max(1.0 - self.flip_penalty, 1e-6)
+else: self.equity -= self.flip_penalty
+info['flip_penalty'] = float(self.flip_penalty)
+if self.pos != 0 and self.entry is not None:
+cost = (self.spread_abs + slip)/max(price,1e-12) + self.commission_rate
+if self.reward_mode == 'pct': self.equity *= max(1.0 - cost, 1e-6)
+else: self.equity -= cost
+self.pos = desired
+if self.pos != 0:
+cost = (self.spread_abs + slip)/max(price,1e-12) + self.commission_rate
+if self.reward_mode == 'pct': self.equity *= max(1.0 - cost, 1e-6)
+else: self.equity -= cost
+self.entry = price
+else:
+self.entry = None
+if self.reward_mode == 'pct':
+step_ret = 0.0
+if self.pos != 0:
+dir = 1 if self.pos>0 else -1
+step_ret = dir * ((price/max(prev,1e-12)) - 1.0)
+self.equity *= (1.0 + step_ret)
+reward = float(self.equity - self.prev_eq)
+else:
+reward = float(self.equity - self.prev_eq)
+self.prev_eq = self.equity
+self._i += 1
+terminated = bool(self._i >= len(self.df) - 1)
+truncated = False
+if self.equity <= self.min_equity:
+truncated = True
+info['early_stop'] = True
+info.update({'time': ts, 'price': price, 'pos': int(self.pos), 'equity': float(self.equity), 'inside_hours': bool(inside)})
+return self._obs(), reward, terminated, truncated, info
+
+
+=== FILE: _backup_py\fetch__mt5_data.py ===
+
+# -*- coding: utf-8 -*-
+"""
+Fetch bars & 24h tick sample from MT5 (demo/real). Incremental merge to maintain 720d.
+Atomic CSV writes, Retries/backoff, Weekend-safe ticks (warn only)
+"""
+import MetaTrader5 as mt5
+import pandas as pd
+from datetime import datetime, timedelta, timezone
+import yaml
+from pathlib import Path
+import numpy as np, time
+from utils.atomic import atomic_write_csv
+from utils.mt5_health import ensure_mt5_ready
+
+cfg = yaml.safe_load(open('config.yaml','r',encoding='utf-8'))
+SYMBOL = cfg['symbol']
+BARS_CSV = cfg['files']['bars_csv']
+TICKS_CSV = cfg['files']['ticks_csv']
+HISTORY_DAYS = int(cfg.get('history_days', 720))
+TF_MAP={'M1': mt5.TIMEFRAME_M1,'M5': mt5.TIMEFRAME_M5,'M15': mt5.TIMEFRAME_M15}
+TF_NAME = cfg.get('timeframe','M5')
+TF = TF_MAP.get(TF_NAME, mt5.TIMEFRAME_M5)
+CHUNK = int(cfg.get('mt5',{}).get('bars_chunk', 20000))
+UPDATE_DAYS = int(cfg.get('mt5',{}).get('update_days', 60))
+
+def init_mt5():
+    # inicjalizacja + czytelny komunikat, gdy terminal/konto nie są gotowe
+    if not ensure_mt5_ready():
+        last_err = mt5.last_error()
+        raise RuntimeError(f"MT5 not ready (terminal/account). Start MT5 and login to a demo/real account. last_error={last_err}")
+    term = mt5.terminal_info(); acc = mt5.account_info()
+    parts=[]
+    if getattr(term,"company",None): parts.append(f"Company={term.company}")
+    if getattr(term,"name",None): parts.append(f"TerminalName={term.name}")
+    if getattr(acc,"login",0): parts.append(f"Login={acc.login}")
+    if getattr(acc,"server",None): parts.append(f"Server={acc.server}")
+    if getattr(acc,"name",None): parts.append(f"AccountName={acc.name}")
+    print("[MT5] " + " | ".join(parts) if parts else "[MT5] initialized")
+
+def ensure_symbol(symbol: str)->bool:
+    info = mt5.symbol_info(symbol)
+    if info is None:
+        mt5.symbol_select(symbol, True)
+        info = mt5.symbol_info(symbol)
+    if info is None: return False
+    if not info.visible:
+        if not mt5.symbol_select(symbol, True): return False
+    return True
+
+def with_retries(fn, attempts=3, sleep_s=2, *a, **kw):
+    last=None
+    for i in range(attempts):
+        try:
+            return fn(*a, **kw)
+        except Exception as e:
+            last = e
+            time.sleep(sleep_s*(i+1))
+    if last: raise last
+
+def _to_df(rates):
+    df = pd.DataFrame(rates)
+    if df.empty: return df
+    df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
+    if 'real_volume' in df.columns:
+        df.rename(columns={'real_volume':'tick_volume'}, inplace=True)
+    cols=['time','open','high','low','close','tick_volume','spread']
+    return df[cols].sort_values('time').drop_duplicates('time')
+
+def fetch_range(symbol, timeframe, utc_from, utc_to):
+    rates = mt5.copy_rates_range(symbol, timeframe, utc_from, utc_to)
+    if rates is None or len(rates)==0:
+        last_err = mt5.last_error()
+        raise RuntimeError(f"copy_rates_range empty for '{symbol}'. last_error={last_err}")
+    return _to_df(rates)
+
+def fetch_from_pos_tail(symbol, timeframe, count):
+    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, count)
+    if rates is None or len(rates)==0:
+        last_err = mt5.last_error()
+        raise RuntimeError(f"copy_rates_from_pos empty for '{symbol}'. last_error={last_err}")
+    return _to_df(rates)
+
+def load_existing_bars(path: str):
+    p = Path(path)
+    if not p.exists(): return None
+    try:
+        df = pd.read_csv(p, parse_dates=['time'])
+        if df.empty: return None
+        return df.sort_values('time').drop_duplicates('time').reset_index(drop=True)
+    except Exception:
+        return None
+
+def merge_clip(existing: pd.DataFrame | None, new_df: pd.DataFrame, keep_days:int)->pd.DataFrame:
+    if existing is None or existing.empty:
+        base = new_df.copy()
+    else:
+        base = (pd.concat([existing, new_df], ignore_index=True)
+                .drop_duplicates('time').sort_values('time'))
+    cutoff = datetime.now(timezone.utc) - timedelta(days=keep_days+1)
+    base = base[base['time'] >= pd.Timestamp(cutoff)]
+    return base.reset_index(drop=True)
+
+def fetch_bars_incremental(symbol, timeframe, keep_days:int, update_days:int)->pd.DataFrame:
+    existing = load_existing_bars(BARS_CSV)
+    if existing is None:
+        to = datetime.now(timezone.utc); frm = to - timedelta(days=keep_days+2)
+        df = with_retries(lambda: fetch_range(symbol, timeframe, frm, to))
+        if len(df) < 1000:
+            tail = with_retries(lambda: fetch_from_pos_tail(symbol, timeframe, CHUNK))
+            df = merge_clip(df, tail, keep_days)
+        return df
+    to = datetime.now(timezone.utc); frm = to - timedelta(days=max(2, update_days))
+    fresh = with_retries(lambda: fetch_range(symbol, timeframe, frm, to))
+    merged = merge_clip(existing, fresh, keep_days)
+    return merged
+
+def fetch_ticks(symbol: str, hours: int=24)->pd.DataFrame:
+    utc_to = datetime.now(timezone.utc)
+    utc_from = utc_to - timedelta(hours=hours)
+    ticks = mt5.copy_ticks_range(symbol, utc_from, utc_to, mt5.COPY_TICKS_ALL)
+    if ticks is None or len(ticks)==0:
+        last_err = mt5.last_error()
+        raise RuntimeError(f"No MT5 ticks for '{symbol}'. last_error={last_err}")
+    tdf = pd.DataFrame(ticks)
+    tdf['time'] = pd.to_datetime(tdf['time'], unit='s', utc=True)
+    return tdf[['time','bid','ask','last','volume']]
+
+def suggest_costs(tdf: pd.DataFrame)->dict:
+    spr = (tdf['ask'] - tdf['bid']).astype(float).replace([np.inf,-np.inf], np.nan).dropna()
+    med_spread = float(np.median(spr)) if len(spr) else 0.0
+    p75_spread = float(np.percentile(spr, 75)) if len(spr) else 0.0
+    mid = (tdf['ask'] + tdf['bid'])/2.0
+    dm = (mid.diff().abs()).replace([np.inf,-np.inf], np.nan).dropna()
+    med_dm = float(np.median(dm)) if len(dm) else 0.0
+    med_price = float(np.nanmedian(mid)) if len(mid) else 1.0
+    slippage_k = float(min(max(med_dm / max(med_price, 1e-12), 0.0), 0.01))
+    return {'spread_abs_median': round(med_spread,5), 'spread_abs_p75': round(p75_spread,5), 'slippage_k_suggested': round(slippage_k,4)}
+
+def main():
+    init_mt5()
+    try:
+        print(f"[CFG] symbol={SYMBOL} tf={TF_NAME} keep_days={HISTORY_DAYS} update_days={UPDATE_DAYS}")
+        if not ensure_symbol(SYMBOL):
+            raise SystemExit(
+                "Symbol not found or not visible in Market Watch. "
+                "Open Symbols window in MT5 and SHOW the instrument."
+            )
+        bars = fetch_bars_incremental(SYMBOL, TF, keep_days=HISTORY_DAYS, update_days=UPDATE_DAYS)
+        assert {'time','open','high','low','close'}.issubset(bars.columns), "Bars frame malformed"
+        assert len(bars) > 100, "Too few bars"
+        atomic_write_csv(bars, BARS_CSV)
+        print(f"Saved bars: {BARS_CSV} ({len(bars)})")
+        # ticks są opcjonalne (weekend-safe)
+        try:
+            ticks = with_retries(lambda: fetch_ticks(SYMBOL, hours=24))
+            atomic_write_csv(ticks, TICKS_CSV)
+            print(f"Saved ticks: {TICKS_CSV} ({len(ticks)})")
+            sugg = suggest_costs(ticks)
+            Path('reports').mkdir(parents=True, exist_ok=True)
+            Path('reports/costs_suggestion.yaml').write_text(
+                yaml.safe_dump(sugg, allow_unicode=True, sort_keys=False), encoding='utf-8')
+            print("Cost suggestions -> reports/costs_suggestion.yaml")
+        except Exception as e:
+            print(f"[warn] ticks unavailable ({e}); keeping previous {TICKS_CSV}")
+    finally:
+        mt5.shutdown()
+
+if __name__ == '__main__':
+    main()
+
+=== FILE: _backup_py\quick_env_test.py ===
+
+import yaml, pandas as pd
+from env_xau import XauTradingEnv
+cfg=yaml.safe_load(open('config.yaml','r',encoding='utf-8'))
+df=pd.read_csv(cfg['files']['features_csv'], parse_dates=['time']).sort_values('time').reset_index(drop=True)
+df=df.tail(max(int(cfg.get('window',128))+256,512))
+env=XauTradingEnv(df, window=int(cfg.get('window',128)),
+spread_abs=cfg['costs']['spread_abs'], commission_rate=cfg['costs']['commission_rate'], slippage_k=cfg['costs']['slippage_k'],
+reward_mode=cfg.get('env',{}).get('reward_mode', cfg.get('reward_mode','pct')), use_close_norm=True,
+min_equity=float(cfg.get('env',{}).get('min_equity',0.8)))
+obs,info=env.reset(); print('reset OK', len(obs))
+obs,r,term,trunc,info=env.step(1); print('step OK', r, term, trunc)
