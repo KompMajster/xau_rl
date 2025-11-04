@@ -1,0 +1,25 @@
+{
+  "feature_columns": [
+    "tick_volume.1",
+    "ret1",
+    "ema10",
+    "ema50",
+    "ema200",
+    "rsi14",
+    "atr14",
+    "macd",
+    "macd_signal",
+    "macd_hist",
+    "bb_ma",
+    "bb_up",
+    "bb_lo",
+    "bb_width",
+    "tod_sin",
+    "tod_cos",
+    "dow_sin",
+    "dow_cos",
+    "close_log",
+    "close_norm"
+  ],
+  "price_column": "close_norm"
+}

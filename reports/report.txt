@@ -1,0 +1,18 @@
+# RL Validation Report (XAUUSD M5)
+Date: 2025-11-04 08:39:32
+
+## Base metrics
+
+Final equity: 1.000000
+Min equity: 0.995518
+Max drawdown: -0.108857
+
+
+## Extra metrics from equity
+- Steps: 3000
+- Sharpe (daily): 0.020
+- Sortino (daily): 0.012
+- Daily vol: 0.0345
+- CAGR (est.): 1.157%
+- MaxDD: -10.89%
+- Calmar: 0.106
