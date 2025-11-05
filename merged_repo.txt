@@ -1,55 +1,138 @@
-# Popraw NIGHTLY REPORT (23:00)
-(Get-Content "C:\xau_rl\ops\daemon_nightly_report.ps1" -Raw) `
-  -replace 'return\s+int\.TotalSeconds', 'return int.TotalSeconds' `
-| Set-Content "C:\xau_rl\ops\daemon_nightly_report.ps1" -Encoding UTF8
+=== TAIL LOGÓW (jeśli istnieją) ===
 
-# Popraw NIGHTLY TRAIN (00:30) – ma też zwrot TotalSeconds
-(Get-Content "C:\xau_rl\ops\daemon_nightly_train.ps1" -Raw) `
-  -replace 'return\s+int\.TotalSeconds', 'return int.TotalSeconds' `
-| Set-Content "C:\xau_rl\ops\daemon_nightly_train.ps1" -Encoding UTF8
+--- paper_loop.err.log ---
 
-# Popraw FEATURE DISCOVERY (co 3 dni 21:00)
-(Get-Content "C:\xau_rl\ops\daemon_feature_discovery.ps1" -Raw) `
-  -replace 'return\s+int\.TotalSeconds', 'return int.TotalSeconds' `
-| Set-Content "C:\xau_rl\ops\daemon_feature_discovery.ps1" -Encoding UTF8
+--- paper_loop.log ---
 
-# Popraw CALIBRATION (co 3 dni 22:00)
-(Get-Content "C:\xau_rl\ops\daemon_calibration_biweekly.ps1" -Raw) `
-  -replace 'return\s+int\.TotalSeconds', 'return int.TotalSeconds' `
-| Set-Content "C:\xau_rl\ops\daemon_calibration_biweekly.ps1" -Encoding UTF8
+--- xau_fetch_features.err.log ---
 
-# Popraw TE CALENDAR (05:00)
-(Get-Content "C:\xau_rl\ops\daemon_te_calendar.ps1" -Raw) `
-  -replace 'return\s+int\.TotalSeconds', 'return int.TotalSeconds' `
-| Set-Content "C:\xau_rl\ops\daemon_te_calendar.ps1" -Encoding UTF8
+--- xau_fetch_features.out.log ---
 
-# Na wszelki wypadek odblokuj skrypty (gdyby były oznaczone jako z internetu)
-Get-ChildItem "C:\xau_rl\ops\daemon_*.ps1" | Unblock-File
+--- xau_mini_update.out.log ---
+
+--- xau_mini_update.err.log ---
+
+--- mini_update.log ---
+[2025-11-05T11:43:59.1826604+01:00] [mini_update] bootstrap_alive
+
+[2025-11-05T11:43:59.2741841+01:00] [mini_update] start
+
+--- xau_nightly_train.out.log ---
+
+--- xau_feature_discovery.err.log ---
+int.TotalSeconds : The term 'int.TotalSeconds' is not recognized as the name of a cmdlet, function,
+ script file, or operable program. Check the spelling of the name, or if a path was included, verif
+y that the path is correct and try again.
+At C:\xau_rl\ops\daemon_feature_discovery.ps1:18 char:10
++   return int.TotalSeconds
++          ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (int.TotalSeconds:String) [], ParentContainsErrorRec
+   ordException
+    + FullyQualifiedErrorId : CommandNotFoundException
 
 
+--- xau_feature_discovery.out.log ---
 
-# Restart dotkniętych usług
-C:\nssm\nssm.exe stop  xau_nightly_report   2>$null
-C:\nssm\nssm.exe start xau_nightly_report
-C:\nssm\nssm.exe stop  xau_nightly_train    2>$null
-C:\nssm\nssm.exe start xau_nightly_train
-C:\nssm\nssm.exe stop  xau_feature_discovery 2>$null
-C:\nssm\nssm.exe start xau_feature_discovery
-C:\nssm\nssm.exe stop  xau_calibration      2>$null
-C:\nssm\nssm.exe start xau_calibration
-C:\nssm\nssm.exe stop  xau_te_calendar      2>$null
-C:\nssm\nssm.exe start xau_te_calendar
+--- nightly_report.log ---
+[2025-11-05T11:44:03.5751457+01:00] [nightly_report] bootstrap_alive
+[2025-11-05T11:44:14.8325205+01:00] [nightly_report] bootstrap_alive
 
-# Status po restarcie
-sc.exe query xau_nightly_report
-sc.exe query xau_nightly_train
-sc.exe query xau_feature_discovery
-sc.exe query xau_calibration
-sc.exe query xau_te_calendar
+--- xau_calibration.err.log ---
+int.TotalSeconds : The term 'int.TotalSeconds' is not recognized as the name of a cmdlet, function,
+ script file, or operable program. Check the spelling of the name, or if a path was included, verif
+y that the path is correct and try again.
+At C:\xau_rl\ops\daemon_calibration_biweekly.ps1:16 char:10
++   return int.TotalSeconds
++          ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (int.TotalSeconds:String) [], ParentContainsErrorRec
+   ordException
+    + FullyQualifiedErrorId : CommandNotFoundException
 
-# Błędy zniknęły? (err log powinien być pusty po restarcie)
-Get-Content "C:\xau_rl\logs\services\xau_nightly_report.err.log"    -Tail 30
-Get-Content "C:\xau_rl\logs\services\xau_nightly_train.err.log"     -Tail 30
-Get-Content "C:\xau_rl\logs\services\xau_feature_discovery.err.log" -Tail 30
-Get-Content "C:\xau_rl\logs\services\xau_calibration.err.log"       -Tail 30
-Get-Content "C:\xau_rl\logs\services\xau_te_calendar.err.log"       -Tail 30
+
+--- xau_calibration.out.log ---
+
+--- nightly_train.log ---
+[2025-11-05T11:44:05.7132072+01:00] [nightly_train] bootstrap_alive
+[2025-11-05T11:44:15.4070751+01:00] [nightly_train] bootstrap_alive
+
+--- xau_te_calendar.err.log ---
+int.TotalSeconds : The term 'int.TotalSeconds' is not recognized as the name of a cmdlet, function,
+ script file, or operable program. Check the spelling of the name, or if a path was included, verif
+y that the path is correct and try again.
+At C:\xau_rl\ops\daemon_te_calendar.ps1:19 char:10
++   return int.TotalSeconds
++          ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (int.TotalSeconds:String) [], ParentContainsErrorRec
+   ordException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+
+--- xau_te_calendar.out.log ---
+
+--- feature_discovery.log ---
+[2025-11-05T11:44:07.9116119+01:00] [feature_discovery] bootstrap_alive
+[2025-11-05T11:44:16.1633066+01:00] [feature_discovery] bootstrap_alive
+
+--- calibration_3d.log ---
+[2025-11-05T11:44:10.0846410+01:00] [calibration] bootstrap_alive
+[2025-11-05T11:44:17.5783121+01:00] [calibration] bootstrap_alive
+
+--- te_calendar.log ---
+[2025-11-05T11:44:10.7070562+01:00] [te_calendar] bootstrap_alive
+[2025-11-05T11:44:17.3616607+01:00] [te_calendar] bootstrap_alive
+
+--- fetch_features.log ---
+[2025-11-05T11:43:55.2554220+01:00] [fetch_features] bootstrap_alive
+
+[2025-11-05T11:43:55.3168357+01:00] [fetch_features] start
+[MT5] Company=MetaQuotes Ltd. | TerminalName=MetaTrader 5 | Login=62719025 | Server=OANDATMS-MT5 | AccountName=PL/M62719025/PLN
+
+[CFG] symbol=GOLD.pro tf=M5 keep_days=720 update_days=60
+
+Saved bars: data/XAUUSD_M5.csv (11917)
+
+Saved ticks: data/XAUUSD_ticks_sample.csv (711128)
+
+Cost suggestions -> reports/costs_suggestion.yaml
+
+[warn] fundamentals skipped: Brak external\fred\DGS10.csv. Zainstaluj fredapi lub umiee☺`☺ CSV.
+
+Saved features and features_spec.json (with fundamentals/calendar if available).
+
+
+[2025-11-05T11:44:12.7576710+01:00] [fetch_features] done
+
+--- xau_nightly_report.out.log ---
+
+--- xau_nightly_report.err.log ---
+int.TotalSeconds : The term 'int.TotalSeconds' is not recognized as the name of a cmdlet, function,
+ script file, or operable program. Check the spelling of the name, or if a path was included, verif
+y that the path is correct and try again.
+At C:\xau_rl\ops\daemon_nightly_report.ps1:19 char:10
++   return int.TotalSeconds
++          ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (int.TotalSeconds:String) [], ParentContainsErrorRec
+   ordException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+int.TotalSeconds : The term 'int.TotalSeconds' is not recognized as the name of a cmdlet, function,
+ script file, or operable program. Check the spelling of the name, or if a path was included, verif
+y that the path is correct and try again.
+At C:\xau_rl\ops\daemon_nightly_report.ps1:19 char:10
++   return int.TotalSeconds
++          ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (int.TotalSeconds:String) [], ParentContainsErrorRec
+   ordException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+
+--- xau_nightly_train.err.log ---
+int.TotalSeconds : The term 'int.TotalSeconds' is not recognized as the name of a cmdlet, function,
+ script file, or operable program. Check the spelling of the name, or if a path was included, verif
+y that the path is correct and try again.
+At C:\xau_rl\ops\daemon_nightly_train.ps1:22 char:10
++   return int.TotalSeconds
++          ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (int.TotalSeconds:String) [], ParentContainsErrorRec
+   ordException
+    + FullyQualifiedErrorId : CommandNotFoundException
