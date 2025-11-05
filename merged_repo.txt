@@ -1,3 +1,39 @@
-powershell -ExecutionPolicy Bypass `
-  -File C:\xau_rl\ops\install_all_services_cleanup_only.ps1 `
+PS C:\xau_rl\ops> powershell -ExecutionPolicy Bypass `
+  -File C:\xau_rl\ops\install_services.ps1 `
   -KeepPPO 15 -KeepLogDays 21 -CleanupIntervalHours 6
+powershell : At C:\xau_rl\ops\install_services.ps1:11 char:1
+At line:1 char:1
++ powershell -ExecutionPolicy Bypass `
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (At C:\xau_rl\op...s.ps1:11 char:1:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
++ [CmdletBinding()]
++ ~~~~~~~~~~~~~~~~~
+Unexpected attribute 'CmdletBinding'.
+At C:\xau_rl\ops\install_services.ps1:12 char:1
++ param(
++ ~~~~~
+Unexpected token 'param' in expression or statement.
+At C:\xau_rl\ops\install_services.ps1:13 char:25
++     [string]$RepoRoot = "C:\xau_rl",
++                         ~~~~~~~~~~~
+The assignment expression is not valid. The input to an assignment operator must be an object that is able to accept as
+signments, such as a variable or a property.
+At C:\xau_rl\ops\install_services.ps1:14 char:25
++     [string]$NssmPath = "C:\nssm\nssm.exe",              # pena cie ...
++                         ~~~~~~~~~~~~~~~~~~
+The assignment expression is not valid. The input to an assignment operator must be an object that is able to accept as
+signments, such as a variable or a property.
+At C:\xau_rl\ops\install_services.ps1:16 char:21
++     [int]$KeepPPO = 10,                                  # ile ostatn ...
++                     ~~
+The assignment expression is not valid. The input to an assignment operator must be an object that is able to accept as
+signments, such as a variable or a property.
+At C:\xau_rl\ops\install_services.ps1:17 char:25
++     [int]$KeepLogDays = 30,                              # ile dni tr ...
++                         ~~
+The assignment expression is not valid. The input to an assignment operator must be an object that is able to accept as
+signments, such as a variable or a property.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : UnexpectedAttribute
