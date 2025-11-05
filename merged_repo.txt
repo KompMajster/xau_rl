@@ -1,4 +1,102 @@
-[2025-11-05T15:47:10.3375474+01:00] [cleanup] Start cleanup
-[2025-11-05T15:47:10.3375474+01:00] [cleanup] Czyszczenie folder˘w PPO (C:\xau_rl;KEEP_PPO=15;KEEP_LOG_DAYS=21;CLEANUP_INTERVAL_HOURS=6\logs\ppo_gold_m5) - zachowuj© 10
-[2025-11-05T15:47:10.3375474+01:00] [cleanup] Czyszczenie log˘w usug starszych niľ 30 dni (C:\xau_rl;KEEP_PPO=15;KEEP_LOG_DAYS=21;CLEANUP_INTERVAL_HOURS=6\logs\services)
-[2025-11-05T15:47:10.3375474+01:00] [cleanup] Cleanup zakoäczony
+# encoding: utf-8
+$ErrorActionPreference = "Stop"
+
+# === PARAMETRY Z ENV (z domyślnymi wartościami) ===
+# Repo root
+$REPO = $env:XAU_REPO
+if ([string]::IsNullOrWhiteSpace($REPO)) { $REPO = "C:\xau_rl" }
+
+# Jeśli ktoś podał AppEnvironmentExtra w jednej linii (ze średnikami),
+# utnij wszystko po pierwszym ';' – defensywna sanitacja.
+if ($REPO -like "*;*") {
+    $REPO = $REPO.Split(';')[0]
+}
+
+# Ścieżki
+$PPO_DIR  = Join-Path $REPO "logs\ppo_gold_m5"
+$SERV_DIR = Join-Path $REPO "logs\services"
+$MODELS   = Join-Path $REPO "models"
+New-Item -ItemType Directory -Force -Path $MODELS | Out-Null
+
+# Liczby z ENV (PS 5.1 – bez operatora ?:)
+[int]$KEEP_FOLDERS = 10
+if ($env:KEEP_PPO -and $env:KEEP_PPO -match '^\d+$') {
+    $KEEP_FOLDERS = [int]$env:KEEP_PPO
+}
+
+[int]$KEEP_LOG_DAYS = 30
+if ($env:KEEP_LOG_DAYS -and $env:KEEP_LOG_DAYS -match '^\d+$') {
+    $KEEP_LOG_DAYS = [int]$env:KEEP_LOG_DAYS
+}
+
+[int]$INTERVAL_H = 24
+if ($env:CLEANUP_INTERVAL_HOURS -and $env:CLEANUP_INTERVAL_HOURS -match '^\d+$') {
+    $INTERVAL_H = [int]$env:CLEANUP_INTERVAL_HOURS
+}
+
+function Log([string]$m) {
+    $ts = Get-Date -Format o
+    Write-Host "[$ts] [cleanup] $m"
+}
+
+function Cleanup-PPOFolders {
+    Log "Czyszczenie folderów PPO ($PPO_DIR) – zachowuję $KEEP_FOLDERS"
+    if (-not (Test-Path -LiteralPath $PPO_DIR)) { return }
+
+    $folders  = Get-ChildItem -LiteralPath $PPO_DIR -Directory -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending
+    if (-not $folders) { return }
+
+    $toRemove = $folders | Select-Object -Skip $KEEP_FOLDERS
+    foreach ($f in $toRemove) {
+        try {
+            # (opcjonalnie) kopia best_model.zip przed usunięciem katalogu
+            $best = Join-Path $f.FullName "best_model.zip"
+            if (Test-Path -LiteralPath $best) {
+                $dest = Join-Path $MODELS ("best_" + $f.Name + ".zip")
+                Copy-Item -LiteralPath $best -Destination $dest -Force
+                Log "Zapisano kopię modelu: $dest"
+            }
+
+            Remove-Item -LiteralPath $f.FullName -Recurse -Force
+            Log "Usunięto folder: $($f.Name)"
+        }
+        catch {
+            Log "Błąd usuwania $($f.Name): $($_.Exception.Message)"
+        }
+    }
+}
+
+function Cleanup-ServiceLogs {
+    Log "Czyszczenie logów usług starszych niż $KEEP_LOG_DAYS dni ($SERV_DIR)"
+    if (-not (Test-Path -LiteralPath $SERV_DIR)) { return }
+
+    $cutoff = (Get-Date).AddDays(-$KEEP_LOG_DAYS)
+
+    Get-ChildItem -LiteralPath $SERV_DIR -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -lt $cutoff } |
+        ForEach-Object {
+            try {
+                Remove-Item -LiteralPath $_.FullName -Force
+                Log "Usunięto log: $($_.Name)"
+            }
+            catch {
+                Log "Błąd usuwania logu $($_.Name): $($_.Exception.Message)"
+            }
+        }
+}
+
+# --- Pętla główna (co $INTERVAL_H godzin) ---
+while ($true) {
+    try {
+        Log "Start cleanup"
+        Cleanup-PPOFolders
+        Cleanup-ServiceLogs
+        Log "Cleanup zakończony"
+    }
+    catch {
+        Log "Błąd cleanup: $($_.Exception.Message)"
+    }
+
+    Start-Sleep -Seconds ($INTERVAL_H * 3600)
+}
