@@ -1,105 +1,247 @@
-=== TAIL LOGÓW (jeśli istnieją) ===
+# Codzienny raport walidacyjny o 23:00 (eval + report), z lock-file i single bootstrap_alive
+$ErrorActionPreference = "Stop"
+$REPO = "C:\xau_rl"
+$PY   = "$REPO\.venv\Scripts\python.exe"
+$LOG  = "$REPO\logs\services\nightly_report.log"
+$LOCK = "$REPO\logs\services\nightly_report.lock"
 
---- paper_loop.log ---
+New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null
+Set-Location $REPO
 
---- paper_loop.err.log ---
+if (-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0) {
+  "[$(Get-Date -Format o)] [nightly_report] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
+}
 
---- xau_fetch_features.err.log ---
+function Acquire-Lock { if (Test-Path $LOCK) { $false } else { New-Item -ItemType File -Path $LOCK -Force | Out-Null; $true } }
+function Release-Lock { if (Test-Path $LOCK) { Remove-Item $LOCK -Force } }
 
---- xau_fetch_features.out.log ---
+function Run-Once {
+  & $PY "rl\evaluate.py" "--out_dir" "reports" *>> $LOG
+  & $PY "utils\make_report.py"                 *>> $LOG
+}
 
---- xau_mini_update.out.log ---
+function Seconds-To-Next-2300 {
+  $now    = Get-Date
+  $target = [DateTime]::Today.AddHours(23)
+  if ($now -ge $target) { $target = $target.AddDays(1) }
+  return int.TotalSeconds
+}
 
---- xau_mini_update.err.log ---
-
---- xau_nightly_report.out.log ---
-
---- xau_nightly_report.err.log ---
-
---- mini_update.log ---
-[2025-11-05T12:37:18.5908740+01:00] [mini_update] bootstrap_alive
-
-[2025-11-05T12:37:18.6760989+01:00] [mini_update] start
-
---- nightly_report.log ---
-[2025-11-05T12:37:25.2249997+01:00] [nightly_report] bootstrap_alive
-
---- xau_calibration.out.log ---
-
---- xau_calibration.err.log ---
-
---- nightly_train.log ---
-[2025-11-05T12:37:26.4347273+01:00] [nightly_train] bootstrap_alive
-
---- xau_te_calendar.out.log ---
-
---- xau_te_calendar.err.log ---
-
---- xau_nightly_train.out.log ---
-
---- xau_nightly_train.err.log ---
-int.TotalSeconds : The term 'int.TotalSeconds' is not recognized as the name of a cmdlet, function,
- script file, or operable program. Check the spelling of the name, or if a path was included, verif
-y that the path is correct and try again.
-At C:\xau_rl\ops\daemon_nightly_train.ps1:21 char:10
-+   return int.TotalSeconds
-+          ~~~~~~~~~~~~~~~~
-    + CategoryInfo          : ObjectNotFound: (int.TotalSeconds:String) [], ParentContainsErrorRec
-   ordException
-    + FullyQualifiedErrorId : CommandNotFoundException
+while ($true) {
+  Start-Sleep -Seconds (Seconds-To-Next-2300)
+  $ts = Get-Date -Format o
+  try {
+    if (Acquire-Lock) {
+      "`n[$ts] [nightly_report] start" | Out-File -FilePath $LOG -Append -Encoding utf8
+      Run-Once
+      "`n[$(Get-Date -Format o)] [nightly_report] done" | Out-File -FilePath $LOG -Append -Encoding utf8
+      Release-Lock
+    } else {
+      "`n[$ts] [nightly_report] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
+    }
+  } catch {
+    "[ERROR] $($_ | Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
+    Release-Lock
+  }
+  Start-Sleep -Seconds (24*3600 - 60)
+}
 
 
---- feature_discovery.log ---
-[2025-11-05T12:37:30.0560940+01:00] [feature_discovery] bootstrap_alive
 
---- calibration_3d.log ---
-[2025-11-05T12:37:30.7172164+01:00] [calibration] bootstrap_alive
+# Pełny nightly train (1.5M ts) + eval + report + save/promote o 00:30
+$ErrorActionPreference = "Stop"
+$REPO = "C:\xau_rl"
+$PY   = "$REPO\.venv\Scripts\python.exe"
+$LOG  = "$REPO\logs\services\nightly_train.log"
+$LOCK = "$REPO\logs\services\nightly_train.lock"
 
---- te_calendar.log ---
-[2025-11-05T12:37:33.2031187+01:00] [te_calendar] bootstrap_alive
+New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null
+Set-Location $REPO
 
---- fetch_features.log ---
-[2025-11-05T12:37:15.6784595+01:00] [fetch_features] bootstrap_alive
+if (-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0) {
+  "[$(Get-Date -Format o)] [nightly_train] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
+}
 
-[2025-11-05T12:37:15.6896140+01:00] [fetch_features] start
-[MT5] Company=MetaQuotes Ltd. | TerminalName=MetaTrader 5 | Login=62719025 | Server=OANDATMS-MT5 | AccountName=PL/M62719025/PLN
+function Acquire-Lock { if (Test-Path $LOCK) { $false } else { New-Item -ItemType File -Path $LOCK -Force | Out-Null; $true } }
+function Release-Lock { if (Test-Path $LOCK) { Remove-Item $LOCK -Force } }
 
-[CFG] symbol=GOLD.pro tf=M5 keep_days=720 update_days=60
+function Run-Once {
+  & $PY "rl\train_ppo.py" "--timesteps" "1500000" *>> $LOG
+  & $PY "rl\evaluate.py" "--out_dir" "reports"    *>> $LOG
+  & $PY "utils\make_report.py"                    *>> $LOG
+  & $PY "ops\save_candidate.py"                   *>> $LOG
+  & $PY "ops\promote_challenger.py"               *>> $LOG
+}
 
-Saved bars: data/XAUUSD_M5.csv (11928)
+function Seconds-To-Next-0030 {
+  $now    = Get-Date
+  # dziś 00:30 już minęła -> domyślnie jutro 00:30
+  $target = [DateTime]::Today.AddDays(1).AddHours(0).AddMinutes(30)
+  # jeśli jeszcze przed 00:30 dzisiejszego dnia (teoretycznie przy restarcie ok. północy)
+  if ($now.Hour -lt 1 -and ($now.Hour -lt 0 -or ($now.Hour -eq 0 -and $now.Minute -lt 30))) {
+    $target = [DateTime]::Today.AddHours(0).AddMinutes(30)
+  }
+  return int.TotalSeconds
+}
 
-Saved ticks: data/XAUUSD_ticks_sample.csv (698704)
+while ($true) {
+  Start-Sleep -Seconds (Seconds-To-Next-0030)
+  $ts = Get-Date -Format o
+  try {
+    if (Acquire-Lock) {
+      "`n[$ts] [nightly_train] start" | Out-File -FilePath $LOG -Append -Encoding utf8
+      Run-Once
+      "`n[$(Get-Date -Format o)] [nightly_train] done" | Out-File -FilePath $LOG -Append -Encoding utf8
+      Release-Lock
+    } else {
+      "`n[$ts] [nightly_train] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
+    }
+  } catch {
+    "[ERROR] $($_ | Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
+    Release-Lock
+  }
+  Start-Sleep -Seconds (24*3600 - 60)
+}
 
-Cost suggestions -> reports/costs_suggestion.yaml
 
-[warn] fundamentals skipped: Brak external\fred\DGS10.csv. Zainstaluj fredapi lub umiee☺`☺ CSV.
+# Selekcja cech co 3 dni 21:00
+$ErrorActionPreference = "Stop"
+$REPO = "C:\xau_rl"
+$PY   = "$REPO\.venv\Scripts\python.exe"
+$LOG  = "$REPO\logs\services\feature_discovery.log"
+$LOCK = "$REPO\logs\services\feature_discovery.lock"
 
-Saved features and features_spec.json (with fundamentals/calendar if available).
+New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null
+Set-Location $REPO
+
+if (-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0) {
+  "[$(Get-Date -Format o)] [feature_discovery] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
+}
+
+function Acquire-Lock { if (Test-Path $LOCK) { $false } else { New-Item -ItemType File -Path $LOCK -Force | Out-Null; $true } }
+function Release-Lock { if (Test-Path $LOCK) { Remove-Item $LOCK -Force } }
+
+function Run-Once {
+  & $PY "ops\feature_discovery_weekly.py" "--topK" "96" "--change_frac" "0.10" *>> $LOG
+}
+
+function Seconds-To-Next-21 {
+  $now    = Get-Date
+  $target = [DateTime]::Today.AddHours(21)
+  if ($now -ge $target) { $target = $target.AddDays(1) }
+  return int.TotalSeconds
+}
+
+while ($true) {
+  Start-Sleep -Seconds (Seconds-To-Next-21)
+  $ts = Get-Date -Format o
+  try {
+    if (Acquire-Lock) {
+      "`n[$ts] [feature_discovery] start" | Out-File -FilePath $LOG -Append -Encoding utf8
+      Run-Once
+      "`n[$(Get-Date -Format o)] [feature_discovery] done" | Out-File -FilePath $LOG -Append -Encoding utf8
+      Release-Lock
+    } else {
+      "`n[$ts] [feature_discovery] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
+    }
+  } catch {
+    "[ERROR] $($_ | Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
+    Release-Lock
+  }
+  Start-Sleep -Seconds (3*24*3600 - 60)
+}
 
 
-[2025-11-05T12:37:35.0284232+01:00] [fetch_features] done
+# Kalibracja kosztów co 3 dni 22:00
+$ErrorActionPreference = "Stop"
+$REPO = "C:\xau_rl"
+$PY   = "$REPO\.venv\Scripts\python.exe"
+$LOG  = "$REPO\logs\services\calibration_3d.log"
+$LOCK = "$REPO\logs\services\calibration_3d.lock"
 
---- xau_feature_discovery.out.log ---
+New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null
+Set-Location $REPO
 
---- xau_feature_discovery.err.log ---
-int.TotalSeconds : The term 'int.TotalSeconds' is not recognized as the name of a cmdlet, function,
- script file, or operable program. Check the spelling of the name, or if a path was included, verif
-y that the path is correct and try again.
-At C:\xau_rl\ops\daemon_feature_discovery.ps1:15 char:10
-+   return int.TotalSeconds
-+          ~~~~~~~~~~~~~~~~
-    + CategoryInfo          : ObjectNotFound: (int.TotalSeconds:String) [], ParentContainsErrorRec
-   ordException
-    + FullyQualifiedErrorId : CommandNotFoundException
+if (-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0) {
+  "[$(Get-Date -Format o)] [calibration] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
+}
 
-int.TotalSeconds : The term 'int.TotalSeconds' is not recognized as the name of a cmdlet, function,
- script file, or operable program. Check the spelling of the name, or if a path was included, verif
-y that the path is correct and try again.
-At C:\xau_rl\ops\daemon_feature_discovery.ps1:15 char:10
-+   return int.TotalSeconds
-+          ~~~~~~~~~~~~~~~~
-    + CategoryInfo          : ObjectNotFound: (int.TotalSeconds:String) [], ParentContainsErrorRec
-   ordException
-    + FullyQualifiedErrorId : CommandNotFoundException
+function Acquire-Lock { if (Test-Path $LOCK) { $false } else { New-Item -ItemType File -Path $LOCK -Force | Out-Null; $true } }
+function Release-Lock { if (Test-Path $LOCK) { Remove-Item $LOCK -Force } }
 
-[INFO] Gotowe. W razie STATUS=PAUSED upewnij się, że Application wskazuje na 64-bit: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe i plik .ps1 istnieje.
+function Run-Once { & $PY "utils\calibration.py" "--apply" *>> $LOG }
+
+function Seconds-To-Next-22 {
+  $now    = Get-Date
+  $target = [DateTime]::Today.AddHours(22)
+  if ($now -ge $target) { $target = $target.AddDays(1) }
+  return int.TotalSeconds
+}
+
+while ($true) {
+  Start-Sleep -Seconds (Seconds-To-Next-22)
+  $ts = Get-Date -Format o
+  try {
+    if (Acquire-Lock) {
+      "`n[$ts] [calibration] start" | Out-File -FilePath $LOG -Append -Encoding utf8
+      Run-Once
+      "`n[$(Get-Date -Format o)] [calibration] done" | Out-File -FilePath $LOG -Append -Encoding utf8
+      Release-Lock
+    } else {
+      "`n[$ts] [calibration] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
+    }
+  } catch {
+    "[ERROR] $($_ | Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
+    Release-Lock
+  }
+  Start-Sleep -Seconds (3*24*3600 - 60)
+}
+
+
+# TE calendar codziennie 05:00 + rebuild features (wymaga TE_API_KEY w env usługi)
+$ErrorActionPreference = "Stop"
+$REPO = "C:\xau_rl"
+$PY   = "$REPO\.venv\Scripts\python.exe"
+$LOG  = "$REPO\logs\services\te_calendar.log"
+$LOCK = "$REPO\logs\services\te_calendar.lock"
+
+New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null
+Set-Location $REPO
+
+if (-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0) {
+  "[$(Get-Date -Format o)] [te_calendar] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
+}
+
+function Acquire-Lock { if (Test-Path $LOCK) { $false } else { New-Item -ItemType File -Path $LOCK -Force | Out-Null; $true } }
+function Release-Lock { if (Test-Path $LOCK) { Remove-Item $LOCK -Force } }
+
+function Run-Once {
+  & $PY "save_te_calendar_cache.py" *>> $LOG
+  & $PY "features\build_features.py" *>> $LOG
+}
+
+function Seconds-To-Next-0500 {
+  $now    = Get-Date
+  $target = [DateTime]::Today.AddHours(5)
+  if ($now -ge $target) { $target = $target.AddDays(1) }
+  return int.TotalSeconds
+}
+
+while ($true) {
+  Start-Sleep -Seconds (Seconds-To-Next-0500)
+  $ts = Get-Date -Format o
+  try {
+    if (Acquire-Lock) {
+      "`n[$ts] [te_calendar] start" | Out-File -FilePath $LOG -Append -Encoding utf8
+      Run-Once
+      "`n[$(Get-Date -Format o)] [te_calendar] done" | Out-File -FilePath $LOG -Append -Encoding utf8
+      Release-Lock
+    } else {
+      "`n[$ts] [te_calendar] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
+    }
+  } catch {
+    "[ERROR] $($_ | Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
+    Release-Lock
+  }
+  Start-Sleep -Seconds (24*3600 - 60)
+}
