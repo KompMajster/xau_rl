@@ -1,138 +1,45 @@
-=== TAIL LOGÓW (jeśli istnieją) ===
+# Popraw wszystkie pliki demonów w katalogu ops\
+$files = @(
+  "C:\xau_rl\ops\daemon_nightly_report.ps1",
+  "C:\xau_rl\ops\daemon_nightly_train.ps1",
+  "C:\xau_rl\ops\daemon_feature_discovery.ps1",
+  "C:\xau_rl\ops\daemon_calibration_biweekly.ps1",
+  "C:\xau_rl\ops\daemon_te_calendar.ps1"
+)
 
---- paper_loop.err.log ---
-
---- paper_loop.log ---
-
---- xau_fetch_features.err.log ---
-
---- xau_fetch_features.out.log ---
-
---- xau_mini_update.out.log ---
-
---- xau_mini_update.err.log ---
-
---- mini_update.log ---
-[2025-11-05T11:43:59.1826604+01:00] [mini_update] bootstrap_alive
-
-[2025-11-05T11:43:59.2741841+01:00] [mini_update] start
-
---- xau_nightly_train.out.log ---
-
---- xau_feature_discovery.err.log ---
-int.TotalSeconds : The term 'int.TotalSeconds' is not recognized as the name of a cmdlet, function,
- script file, or operable program. Check the spelling of the name, or if a path was included, verif
-y that the path is correct and try again.
-At C:\xau_rl\ops\daemon_feature_discovery.ps1:18 char:10
-+   return int.TotalSeconds
-+          ~~~~~~~~~~~~~~~~
-    + CategoryInfo          : ObjectNotFound: (int.TotalSeconds:String) [], ParentContainsErrorRec
-   ordException
-    + FullyQualifiedErrorId : CommandNotFoundException
+foreach($f in $files){
+  if(Test-Path $f){
+    $raw = Get-Content $f -Raw
+    # Podmień błędne 'return int.TotalSeconds' na poprawne 'return int.TotalSeconds'
+    $raw = $raw -replace 'return\s+int\.TotalSeconds', 'return int.TotalSeconds'
+    Set-Content $f -Value $raw -Encoding UTF8
+  } else {
+    Write-Host "[WARN] Brak pliku: $f"
+  }
+}
+# Odblokuj pliki (gdyby system oznaczył jako z internetu)
+Get-ChildItem "C:\xau_rl\ops\daemon_*.ps1" | Unblock-File
 
 
---- xau_feature_discovery.out.log ---
 
---- nightly_report.log ---
-[2025-11-05T11:44:03.5751457+01:00] [nightly_report] bootstrap_alive
-[2025-11-05T11:44:14.8325205+01:00] [nightly_report] bootstrap_alive
+# Popraw wszystkie pliki demonów w katalogu ops\
+$files = @(
+  "C:\xau_rl\ops\daemon_nightly_report.ps1",
+  "C:\xau_rl\ops\daemon_nightly_train.ps1",
+  "C:\xau_rl\ops\daemon_feature_discovery.ps1",
+  "C:\xau_rl\ops\daemon_calibration_biweekly.ps1",
+  "C:\xau_rl\ops\daemon_te_calendar.ps1"
+)
 
---- xau_calibration.err.log ---
-int.TotalSeconds : The term 'int.TotalSeconds' is not recognized as the name of a cmdlet, function,
- script file, or operable program. Check the spelling of the name, or if a path was included, verif
-y that the path is correct and try again.
-At C:\xau_rl\ops\daemon_calibration_biweekly.ps1:16 char:10
-+   return int.TotalSeconds
-+          ~~~~~~~~~~~~~~~~
-    + CategoryInfo          : ObjectNotFound: (int.TotalSeconds:String) [], ParentContainsErrorRec
-   ordException
-    + FullyQualifiedErrorId : CommandNotFoundException
-
-
---- xau_calibration.out.log ---
-
---- nightly_train.log ---
-[2025-11-05T11:44:05.7132072+01:00] [nightly_train] bootstrap_alive
-[2025-11-05T11:44:15.4070751+01:00] [nightly_train] bootstrap_alive
-
---- xau_te_calendar.err.log ---
-int.TotalSeconds : The term 'int.TotalSeconds' is not recognized as the name of a cmdlet, function,
- script file, or operable program. Check the spelling of the name, or if a path was included, verif
-y that the path is correct and try again.
-At C:\xau_rl\ops\daemon_te_calendar.ps1:19 char:10
-+   return int.TotalSeconds
-+          ~~~~~~~~~~~~~~~~
-    + CategoryInfo          : ObjectNotFound: (int.TotalSeconds:String) [], ParentContainsErrorRec
-   ordException
-    + FullyQualifiedErrorId : CommandNotFoundException
-
-
---- xau_te_calendar.out.log ---
-
---- feature_discovery.log ---
-[2025-11-05T11:44:07.9116119+01:00] [feature_discovery] bootstrap_alive
-[2025-11-05T11:44:16.1633066+01:00] [feature_discovery] bootstrap_alive
-
---- calibration_3d.log ---
-[2025-11-05T11:44:10.0846410+01:00] [calibration] bootstrap_alive
-[2025-11-05T11:44:17.5783121+01:00] [calibration] bootstrap_alive
-
---- te_calendar.log ---
-[2025-11-05T11:44:10.7070562+01:00] [te_calendar] bootstrap_alive
-[2025-11-05T11:44:17.3616607+01:00] [te_calendar] bootstrap_alive
-
---- fetch_features.log ---
-[2025-11-05T11:43:55.2554220+01:00] [fetch_features] bootstrap_alive
-
-[2025-11-05T11:43:55.3168357+01:00] [fetch_features] start
-[MT5] Company=MetaQuotes Ltd. | TerminalName=MetaTrader 5 | Login=62719025 | Server=OANDATMS-MT5 | AccountName=PL/M62719025/PLN
-
-[CFG] symbol=GOLD.pro tf=M5 keep_days=720 update_days=60
-
-Saved bars: data/XAUUSD_M5.csv (11917)
-
-Saved ticks: data/XAUUSD_ticks_sample.csv (711128)
-
-Cost suggestions -> reports/costs_suggestion.yaml
-
-[warn] fundamentals skipped: Brak external\fred\DGS10.csv. Zainstaluj fredapi lub umiee☺`☺ CSV.
-
-Saved features and features_spec.json (with fundamentals/calendar if available).
-
-
-[2025-11-05T11:44:12.7576710+01:00] [fetch_features] done
-
---- xau_nightly_report.out.log ---
-
---- xau_nightly_report.err.log ---
-int.TotalSeconds : The term 'int.TotalSeconds' is not recognized as the name of a cmdlet, function,
- script file, or operable program. Check the spelling of the name, or if a path was included, verif
-y that the path is correct and try again.
-At C:\xau_rl\ops\daemon_nightly_report.ps1:19 char:10
-+   return int.TotalSeconds
-+          ~~~~~~~~~~~~~~~~
-    + CategoryInfo          : ObjectNotFound: (int.TotalSeconds:String) [], ParentContainsErrorRec
-   ordException
-    + FullyQualifiedErrorId : CommandNotFoundException
-
-int.TotalSeconds : The term 'int.TotalSeconds' is not recognized as the name of a cmdlet, function,
- script file, or operable program. Check the spelling of the name, or if a path was included, verif
-y that the path is correct and try again.
-At C:\xau_rl\ops\daemon_nightly_report.ps1:19 char:10
-+   return int.TotalSeconds
-+          ~~~~~~~~~~~~~~~~
-    + CategoryInfo          : ObjectNotFound: (int.TotalSeconds:String) [], ParentContainsErrorRec
-   ordException
-    + FullyQualifiedErrorId : CommandNotFoundException
-
-
---- xau_nightly_train.err.log ---
-int.TotalSeconds : The term 'int.TotalSeconds' is not recognized as the name of a cmdlet, function,
- script file, or operable program. Check the spelling of the name, or if a path was included, verif
-y that the path is correct and try again.
-At C:\xau_rl\ops\daemon_nightly_train.ps1:22 char:10
-+   return int.TotalSeconds
-+          ~~~~~~~~~~~~~~~~
-    + CategoryInfo          : ObjectNotFound: (int.TotalSeconds:String) [], ParentContainsErrorRec
-   ordException
-    + FullyQualifiedErrorId : CommandNotFoundException
+foreach($f in $files){
+  if(Test-Path $f){
+    $raw = Get-Content $f -Raw
+    # Podmień błędne 'return int.TotalSeconds' na poprawne 'return int.TotalSeconds'
+    $raw = $raw -replace 'return\s+int\.TotalSeconds', 'return int.TotalSeconds'
+    Set-Content $f -Value $raw -Encoding UTF8
+  } else {
+    Write-Host "[WARN] Brak pliku: $f"
+  }
+}
+# Odblokuj pliki (gdyby system oznaczył jako z internetu)
+Get-ChildItem "C:\xau_rl\ops\daemon_*.ps1" | Unblock-File
