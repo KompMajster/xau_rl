@@ -1,45 +1,17 @@
-# Popraw wszystkie pliki demonów w katalogu ops\
-$files = @(
-  "C:\xau_rl\ops\daemon_nightly_report.ps1",
-  "C:\xau_rl\ops\daemon_nightly_train.ps1",
-  "C:\xau_rl\ops\daemon_feature_discovery.ps1",
-  "C:\xau_rl\ops\daemon_calibration_biweekly.ps1",
-  "C:\xau_rl\ops\daemon_te_calendar.ps1"
-)
+$pattern = '\[\$\(Get-Date -Format o\)\]\s*\[(?<tag>[^\]]+)\]\s*bootstrap_alive'
+$replacement = @'
+if(-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0){
+  "[$(Get-Date -Format o)] [__TAG__] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
+}
+'@
 
-foreach($f in $files){
-  if(Test-Path $f){
-    $raw = Get-Content $f -Raw
-    # Podmień błędne 'return int.TotalSeconds' na poprawne 'return int.TotalSeconds'
-    $raw = $raw -replace 'return\s+int\.TotalSeconds', 'return int.TotalSeconds'
-    Set-Content $f -Value $raw -Encoding UTF8
-  } else {
-    Write-Host "[WARN] Brak pliku: $f"
+# Zrób to dla wszystkich demonów
+$daemonFiles = Get-ChildItem "C:\xau_rl\ops\daemon_*.ps1"
+foreach($df in $daemonFiles){
+  $txt = Get-Content $df.FullName -Raw
+  if($txt -match $pattern){
+    $tag = [Regex]::Match($txt, $pattern).Groups['tag'].Value
+    $txt = [Regex]::Replace($txt, $pattern, $replacement.Replace('__TAG__', $tag), 1)
+    Set-Content $df.FullName -Value $txt -Encoding UTF8
   }
 }
-# Odblokuj pliki (gdyby system oznaczył jako z internetu)
-Get-ChildItem "C:\xau_rl\ops\daemon_*.ps1" | Unblock-File
-
-
-
-# Popraw wszystkie pliki demonów w katalogu ops\
-$files = @(
-  "C:\xau_rl\ops\daemon_nightly_report.ps1",
-  "C:\xau_rl\ops\daemon_nightly_train.ps1",
-  "C:\xau_rl\ops\daemon_feature_discovery.ps1",
-  "C:\xau_rl\ops\daemon_calibration_biweekly.ps1",
-  "C:\xau_rl\ops\daemon_te_calendar.ps1"
-)
-
-foreach($f in $files){
-  if(Test-Path $f){
-    $raw = Get-Content $f -Raw
-    # Podmień błędne 'return int.TotalSeconds' na poprawne 'return int.TotalSeconds'
-    $raw = $raw -replace 'return\s+int\.TotalSeconds', 'return int.TotalSeconds'
-    Set-Content $f -Value $raw -Encoding UTF8
-  } else {
-    Write-Host "[WARN] Brak pliku: $f"
-  }
-}
-# Odblokuj pliki (gdyby system oznaczył jako z internetu)
-Get-ChildItem "C:\xau_rl\ops\daemon_*.ps1" | Unblock-File
