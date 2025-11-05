@@ -1,9 +1,234 @@
+#requires -Version 5.1
+<# 
+    C:\xau_rl\ops\daemon_mini_update.ps1
+    Bezpieczny wrapper dla mini_update_ppo.py:
+      - Single instance via Mutex (Global\...)
+      - Log per run (timestamp) + alias _latest
+      - Retry na uchwyt logu (gdy chwilowo zablokowany)
+      - Rotacja logów starszych niż X dni
+      - Jasne kody wyjścia (0 OK, 1 błąd logu, 2 inna instancja, 3 błąd procesu)
+#>
 
-[2025-11-05T13:14:48.7664289+01:00] [mini_update] start
-[ERROR] out-file : Proces nie może uzyskać dostępu do pliku „C:\xau_rl\logs\services\mini_update_ppo.log”, 
-ponieważ jest on używany przez inny proces.
-At C:\xau_rl\ops\daemon_mini_update.ps1:15 char:5
-+     & $PY -u "ops\mini_update_ppo.py" "--timesteps" "300000" 1>> $LOG ...
-+     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : OpenError: (:) [Out-File], IOException
-    + FullyQualifiedErrorId : FileOpenFailure,Microsoft.PowerShell.Commands.OutFileCommand
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+#region === KONFIG ===
+$BASE_DIR         = 'C:\xau_rl'
+$OPS_DIR          = Join-Path $BASE_DIR 'ops'
+$LOG_DIR          = Join-Path $BASE_DIR 'logs\services'
+$PYTHON_EXE       = 'python'   # lub np. 'C:\Python312\python.exe'
+$SCRIPT_REL_PATH  = 'ops\mini_update_ppo.py'
+$TIMESTEPS        = '300000'   # domyślne timesteps
+$LOG_RETENTION_D  = 30         # ile dni trzymać logi
+$GLOBAL_MUTEX     = 'Global\xau_rl_mini_update_ppo'
+$RETRIES_LOG      = 20
+$RETRY_DELAY_MS   = 250
+#endregion === KONFIG ===
+
+#region === Funkcje pomocnicze ===
+function Ensure-Directory {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) {
+        New-Item -ItemType Directory -Path $Path -Force | Out-Null
+    }
+}
+
+function New-RunLog {
+    param(
+        [Parameter(Mandatory)][string]$Dir,
+        [string]$Prefix = 'mini_update_ppo'
+    )
+    $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
+    $path  = Join-Path $Dir "$Prefix`_$stamp.log"
+    return $path
+}
+
+function Wait-ForWritable {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [int]$Retries = 10,
+        [int]$DelayMs = 200
+    )
+    for ($i=0; $i -lt $Retries; $i++) {
+        try {
+            $fs = [System.IO.File]::Open($Path, 'OpenOrCreate', 'Write', 'ReadWrite')
+            $fs.Close()
+            return $true
+        } catch {
+            Start-Sleep -Milliseconds $DelayMs
+        }
+    }
+    return $false
+}
+
+function Rotate-OldLogs {
+    param(
+        [Parameter(Mandatory)][string]$Dir,
+        [int]$RetentionDays = 30,
+        [string]$Pattern = 'mini_update_ppo_*.log'
+    )
+    if ($RetentionDays -le 0) { return }
+    Get-ChildItem -Path $Dir -Filter $Pattern -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-$RetentionDays) } |
+        ForEach-Object {
+            try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop } catch {}
+        }
+}
+#endregion === Funkcje pomocnicze ===
+
+# --- Guard: Single instance (Mutex) ---
+$mtx = $null
+try {
+    $mtx = New-Object System.Threading.Mutex($false, $GLOBAL_MUTEX)
+    if (-not $mtx.WaitOne(0, $false)) {
+        Write-Host "mini_update_ppo: inna instancja już działa – wychodzę (kod 2)."
+        exit 2
+    }
+
+    # --- Przygotowanie środowiska i logów ---
+    Ensure-Directory -Path $LOG_DIR
+    $runLog = New-RunLog -Dir $LOG_DIR
+    $latest = Join-Path $LOG_DIR 'mini_update_ppo_latest.log'
+
+    # Jeżeli plik nie istnieje, zadbaj, by dało się go utworzyć
+    if (-not (Wait-ForWritable -Path $runLog -Retries $RETRIES_LOG -DelayMs $RETRY_DELAY_MS)) {
+        Write-Host "Nie mogę uzyskać dostępu do logu: $runLog – blokada nie ustąpiła (kod 1)."
+        exit 1
+    }
+
+    # Pre-header w logu
+    "=== mini_update_ppo run start: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff zzz') ===" | Out-File -FilePath $runLog -Encoding UTF8
+
+    # Rotacja starych logów (best effort)
+    Rotate-OldLogs -Dir $LOG_DIR -RetentionDays $LOG_RETENTION_D
+
+    # --- Budowa procesu Pythona ---
+    $scriptPath = Join-Path $BASE_DIR $SCRIPT_REL_PATH
+    if (-not (Test-Path -LiteralPath $scriptPath)) {
+        "Błąd: nie znaleziono skryptu: $scriptPath" | Tee-Object -FilePath $runLog -Append | Out-Null
+        exit 3
+    }
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $PYTHON_EXE
+    $psi.WorkingDirectory = $BASE_DIR
+    $psi.ArgumentList.Add('-u')
+    $psi.ArgumentList.Add($scriptPath)
+    $psi.ArgumentList.Add('--timesteps')
+    $psi.ArgumentList.Add($TIMESTEPS)
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError  = $true
+    $psi.UseShellExecute        = $false
+    $psi.CreateNoWindow         = $true
+
+    $p = New-Object System.Diagnostics.Process
+    $p.StartInfo = $psi
+
+    # Obsługa streamów -> do pliku (bez blokowania)
+    $stdOutHandler = {
+        param($sender, $args)
+        if ($args.Data -ne $null) {
+            Add-Content -LiteralPath $runLog -Value $args.Data
+        }
+    }
+    $stdErrHandler = {
+        param($sender, $args)
+        if ($args.Data -ne $null) {
+            Add-Content -LiteralPath $runLog -Value $args.Data
+        }
+    }
+
+    # Start procesu i asynchroniczne czytanie
+    [void]$p.Start()
+    $p.BeginOutputReadLine()
+    $p.BeginErrorReadLine()
+    $p.add_OutputDataReceived($stdOutHandler)
+    $p.add_ErrorDataReceived($stdErrHandler)
+
+    # Czekaj aż zakończy się praca skryptu
+    $p.WaitForExit()
+
+    # Zapewnij flush
+    $p.CancelOutputRead()
+    $p.CancelErrorRead()
+
+    # Zapisz kod wyjścia
+    "=== mini_update_ppo exit code: $($p.ExitCode) at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff zzz') ===" | Add-Content -LiteralPath $runLog
+
+    # Kopia jako 'latest' (best effort)
+    try { Copy-Item -LiteralPath $runLog -Destination $latest -Force } catch {}
+
+    # Zwrot kodu procesu Pythona (0 ok, różne !=0 oznaczają błędy w trenowaniu/mini-update)
+    if ($p.ExitCode -ne 0) { exit 3 } else { exit 0 }
+}
+finally {
+    if ($mtx) {
+        try { $mtx.ReleaseMutex() | Out-Null } catch {}
+        $mtx.Dispose()
+    }
+}
+
+
+#requires -Version 5.1
+<# 
+    C:\xau_rl\ops\install_services.ps1
+    Instalacja/aktualizacja usługi NSSM dla mini_update_ppo (XAU RL)
+#>
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+#region KONFIG
+$SERVICE_NAME   = 'XAU_RL_MiniUpdatePPO'
+$DISPLAY_NAME   = 'XAU RL - Mini Update PPO'
+$DESCRIPTION    = 'Bezpieczny daemon mini-update PPO (single instance, log rotation).'
+$BASE_DIR       = 'C:\xau_rl'
+$SCRIPT_PATH    = Join-Path $BASE_DIR 'ops\daemon_mini_update.ps1'
+$NSSM_EXE       = 'nssm.exe'    # jeśli nie w PATH, podaj pełną ścieżkę
+$POWERSHELL_EXE = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+#endregion
+
+if (-not (Get-Command $NSSM_EXE -ErrorAction SilentlyContinue)) {
+    throw "Nie znaleziono $NSSM_EXE w PATH. Zainstaluj NSSM i podaj pełną ścieżkę."
+}
+if (-not (Test-Path -LiteralPath $SCRIPT_PATH)) {
+    throw "Brak pliku: $SCRIPT_PATH"
+}
+
+# Parametry wywołania PowerShell dla usługi
+$psArgs = @(
+    '-NoProfile',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', $SCRIPT_PATH
+)
+
+# Instaluj lub aktualizuj
+Write-Host "Konfiguruję usługę $SERVICE_NAME ..."
+
+# Utwórz/zmień
+& $NSSM_EXE install $SERVICE_NAME $POWERSHELL_EXE $psArgs
+& $NSSM_EXE set     $SERVICE_NAME DisplayName  $DISPLAY_NAME
+& $NSSM_EXE set     $SERVICE_NAME Description  $DESCRIPTION
+& $NSSM_EXE set     $SERVICE_NAME AppDirectory $BASE_DIR
+
+# Automatyczny restart na błędach
+& $NSSM_EXE set     $SERVICE_NAME Start SERVICE_AUTO_START
+& $NSSM_EXE set     $SERVICE_NAME AppStopMethodSkip 0
+& $NSSM_EXE set     $SERVICE_NAME AppThrottle 1500
+& $NSSM_EXE set     $SERVICE_NAME AppExit Default Restart
+
+# Czyść własne przekierowania NSSM (logi przejmuje skrypt)
+& $NSSM_EXE set     $SERVICE_NAME AppStdout ""
+& $NSSM_EXE set     $SERVICE_NAME AppStderr ""
+
+# Start/Restart
+try {
+    & $NSSM_EXE stop  $SERVICE_NAME | Out-Null
+} catch {}
+& $NSSM_EXE start $SERVICE_NAME | Out-Null
+
+Write-Host "Usługa $SERVICE_NAME została (re)zainstalowana i uruchomiona."
+
+
+
+powershell -ExecutionPolicy Bypass -File "C:\xau_rl\ops\install_services.ps1"
