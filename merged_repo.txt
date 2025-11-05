@@ -1,169 +1,80 @@
-#requires -Version 5.1
-<#
-    C:\xau_rl\ops\install_services.ps1
-    Instalacja / aktualizacja JEDNEJ usługi: xau_cleanup (sprzątanie PPO i logów).
-#>
+PS C:\xau_rl\ops> powershell -ExecutionPolicy Bypass `
+  -File C:\xau_rl\ops\install_services.ps1 `
+  -KeepPPO 15 -KeepLogDays 21 -CleanupIntervalHours 6
+[INFO] Zapisano/odwieľono: C:\xau_rl\ops\daemon_cleanup.ps1
+[INFO] Konfiguruj© usug© xau_cleanup ...
+S e r v i c e   " x a u _ c l e a n u p "   i n s t a l l e d   s u c c e s s f u l l y ! 
+ 
+ 
+ S e t   p a r a m e t e r   " D i s p l a y N a m e "   f o r   s e r v i c e   " x a u _ c l e a n u p " . 
+ 
+ 
+ S e t   p a r a m e t e r   " D e s c r i p t i o n "   f o r   s e r v i c e   " x a u _ c l e a n u p " . 
+ 
+ 
+ S e t   p a r a m e t e r   " A p p D i r e c t o r y "   f o r   s e r v i c e   " x a u _ c l e a n u p " . 
+ 
+ 
+ S e t   p a r a m e t e r   " A p p E n v i r o n m e n t E x t r a "   f o r   s e r v i c e   " x a u _ c l e a n u p " . 
+ 
+ 
+ S e t   p a r a m e t e r   " A p p S t d o u t "   f o r   s e r v i c e   " x a u _ c l e a n u p " . 
+ 
+ 
+ S e t   p a r a m e t e r   " A p p S t d e r r "   f o r   s e r v i c e   " x a u _ c l e a n u p " . 
+ 
+ 
+ S e t   p a r a m e t e r   " S t a r t "   f o r   s e r v i c e   " x a u _ c l e a n u p " . 
+ 
+ 
+ R e s e t   p a r a m e t e r   " A p p T h r o t t l e "   f o r   s e r v i c e   " x a u _ c l e a n u p "   t o   i t s   d e f a u l t . 
+ 
+ 
+ R e s e t   p a r a m e t e r   " A p p E x i t "   f o r   s e r v i c e   " x a u _ c l e a n u p "   t o   i t s   d e f a u l t . 
+ 
+ 
+powershell : x a u _ c l e a n u p :   S T O P :   U s Bu g a   n i e   z o s t a Ba   u r u c h o m i o n a . 
+At line:1 char:1
++ powershell -ExecutionPolicy Bypass `
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (x a u _ c l e a... o m i o n a . :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+ 
+ 
+ x a u _ c l e a n u p :   U n e x p e c t e d   s t a t u s   S E R V I C E _ P A U S E D   i n   r e s p o n s e   t o   S T A R T   c o n t r o l . 
+ 
+ 
+ 
+=== STATUS USťUGI ===
 
-[CmdletBinding()]
-param(
-    [string]$RepoRoot = "C:\xau_rl",
-    [string]$NssmPath = "C:\nssm\nssm.exe",              # pełna ścieżka do nssm.exe
-    [switch]$UsePwsh7,                                   # jeśli chcesz użyć PowerShell 7 jako hosta
-    [int]$KeepPPO = 10,                                  # ile ostatnich folderów PPO_xxx zachować
-    [int]$KeepLogDays = 30,                              # ile dni trzymać logi usług
-    [int]$CleanupIntervalHours = 24                      # co ile godzin wykonać cleanup (pętla)
-)
+SERVICE_NAME: xau_cleanup 
+        TYPE               : 10  WIN32_OWN_PROCESS  
+        STATE              : 7  PAUSED 
+                                (STOPPABLE, PAUSABLE, ACCEPTS_SHUTDOWN)
+        WIN32_EXIT_CODE    : 0  (0x0)
+        SERVICE_EXIT_CODE  : 0  (0x0)
+        CHECKPOINT         : 0x0
+        WAIT_HINT          : 0x0
 
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
+=== OSTATNIE LOGI (jeli istniejĄ) ===
 
-function Info($m){ Write-Host "[INFO] $m" -ForegroundColor Cyan }
-function Warn($m){ Write-Host "[WARN] $m" -ForegroundColor Yellow }
-function Err ($m){ Write-Host "[ERR ] $m" -ForegroundColor Red }
-function Ensure-Dir($p){ if(-not(Test-Path $p)){ New-Item -ItemType Directory -Force -Path $p | Out-Null } }
+--- xau_cleanup.out.log ---
 
-function PS-Host(){
-    if($UsePwsh7){
-        $p = "C:\Program Files\PowerShell\7\pwsh.exe"
-        if(Test-Path $p){ return $p }
-        Warn "PS7 nie znaleziony. Używam klasycznego PowerShell 5.1."
-    }
-    return "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
-}
-
-# --- Walidacje ---
-if (-not (Test-Path -LiteralPath $NssmPath)) {
-    throw "Nie znaleziono NSSM: $NssmPath"
-}
-Ensure-Dir $RepoRoot
-$logsDir = Join-Path $RepoRoot "logs\services"
-Ensure-Dir $logsDir
-
-# --- Ścieżki i nazwy usług ---
-$CleanupServiceName = "xau_cleanup"
-$CleanupDisplayName = "XAU RL - Cleanup"
-$CleanupDescription = "Sprzątanie folderów PPO_xxx i logów usług zgodnie z polityką retencji."
-$CleanupScriptPath  = Join-Path $RepoRoot "ops\daemon_cleanup.ps1"
-
-# --- Zapisz/odśwież skrypt daemon_cleanup.ps1 (idempotentnie) ---
-Ensure-Dir (Split-Path $CleanupScriptPath)
-
-$cleanupContent = @'
-# encoding: utf-8
-$ErrorActionPreference = "Stop"
-
-# === KONFIG z ENV (z domyślnymi wartościami) ===
-$REPO = $env:XAU_REPO
-if ([string]::IsNullOrWhiteSpace($REPO)) { $REPO = "C:\xau_rl" }
-
-$PPO_DIR   = Join-Path $REPO "logs\ppo_gold_m5"
-$SERV_DIR  = Join-Path $REPO "logs\services"
-$MODELS    = Join-Path $REPO "models"
-
-[int]$KEEP_FOLDERS = int ? "10" : $env:KEEP_PPO)
-[int]$KEEP_LOG_DAYS = int ? "30" : $env:KEEP_LOG_DAYS)
-[int]$INTERVAL_H = int ? "24" : $env:CLEANUP_INTERVAL_HOURS)
-
-New-Item -ItemType Directory -Force -Path $MODELS | Out-Null
-
-function Log([string]$m){ $ts = Get-Date -Format o; Write-Host "[$ts] [cleanup] $m" }
-
-function Cleanup-PPOFolders {
-    Log "Czyszczenie folderów PPO ($PPO_DIR) – zachowuję $KEEP_FOLDERS"
-    if (-not (Test-Path $PPO_DIR)) { return }
-    $folders = Get-ChildItem $PPO_DIR -Directory | Sort-Object LastWriteTime -Descending
-    $toRemove = $folders | Select-Object -Skip $KEEP_FOLDERS
-    foreach ($f in $toRemove) {
-        try {
-            $best = Join-Path $f.FullName "best_model.zip"
-            if (Test-Path $best) {
-                $dest = Join-Path $MODELS ("best_" + $f.Name + ".zip")
-                Copy-Item $best $dest -Force
-                Log "Zapisano kopię modelu: $dest"
-            }
-            Remove-Item $f.FullName -Recurse -Force
-            Log "Usunięto folder: $($f.Name)"
-        } catch {
-            Log "Błąd usuwania $($f.Name): $($_.Exception.Message)"
-        }
-    }
-}
-
-function Cleanup-ServiceLogs {
-    Log "Czyszczenie logów usług starszych niż $KEEP_LOG_DAYS dni ($SERV_DIR)"
-    if (-not (Test-Path $SERV_DIR)) { return }
-    $cutoff = (Get-Date).AddDays(-$KEEP_LOG_DAYS)
-    Get-ChildItem $SERV_DIR -File | Where-Object { $_.LastWriteTime -lt $cutoff } |
-        ForEach-Object {
-            try {
-                Remove-Item $_.FullName -Force
-                Log "Usunięto log: $($_.Name)"
-            } catch {
-                Log "Błąd usuwania logu $($_.Name): $($_.Exception.Message)"
-            }
-        }
-}
-
-while ($true) {
-    try {
-        Log "Start cleanup"
-        Cleanup-PPOFolders
-        Cleanup-ServiceLogs
-        Log "Cleanup zakończony"
-    } catch {
-        Log "Błąd cleanup: $($_.Exception.Message)"
-    }
-    Start-Sleep -Seconds ($INTERVAL_H * 3600)
-}
-'@
-
-Set-Content -LiteralPath $CleanupScriptPath -Value $cleanupContent -Encoding UTF8
-Unblock-File -LiteralPath $CleanupScriptPath -ErrorAction SilentlyContinue
-Info "Zapisano/odświeżono: $CleanupScriptPath"
-
-# --- Instalacja/aktualizacja usługi xau_cleanup ---
-$psExe = PS-Host
-
-Info "Konfiguruję usługę $CleanupServiceName ..."
-& $NssmPath install $CleanupServiceName $psExe `
-    -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $CleanupScriptPath
-
-& $NssmPath set $CleanupServiceName DisplayName  $CleanupDisplayName
-& $NssmPath set $CleanupServiceName Description  $CleanupDescription
-& $NssmPath set $CleanupServiceName AppDirectory $RepoRoot
-
-# Parametry (ENV) przekazywane do serwisu – łatwo zmienisz politykę retencji bez edycji pliku
-$envExtra = @(
-    "XAU_REPO=$RepoRoot",
-    "KEEP_PPO=$KeepPPO",
-    "KEEP_LOG_DAYS=$KeepLogDays",
-    "CLEANUP_INTERVAL_HOURS=$CleanupIntervalHours"
-) -join ';'
-& $NssmPath set $CleanupServiceName AppEnvironmentExtra $envExtra
-
-# Logi usługi (opcjonalnie)
-& $NssmPath set $CleanupServiceName AppStdout (Join-Path $logsDir "xau_cleanup.out.log")
-& $NssmPath set $CleanupServiceName AppStderr (Join-Path $logsDir "xau_cleanup.err.log")
-
-# Auto-start + podstawowe zabezpieczenia restartów
-& $NssmPath set $CleanupServiceName Start SERVICE_AUTO_START
-& $NssmPath set $CleanupServiceName AppThrottle 1500
-& $NssmPath set $CleanupServiceName AppExit Default Restart
-
-# Start/Restart
-try { & $NssmPath stop $CleanupServiceName | Out-Null } catch {}
-& $NssmPath start $CleanupServiceName | Out-Null
-
-Write-Host "`n=== STATUS USŁUGI ==="
-sc.exe query $CleanupServiceName
-
-Write-Host "`n=== OSTATNIE LOGI (jeśli istnieją) ==="
-Get-ChildItem "$logsDir\*.log" -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -like "xau_cleanup*.log" } |
-    Sort-Object LastWriteTime |
-    ForEach-Object {
-        Write-Host "`n--- $($_.Name) ---"
-        try { Get-Content $_.FullName -Tail 50 } catch {}
-    }
-
-Info "Gotowe. Serwis '$CleanupServiceName' działa."
+--- xau_cleanup.err.log ---
+At C:\xau_rl\ops\daemon_cleanup.ps1:12 char:48
++ [int]$KEEP_FOLDERS = int ? "10" : $env:KEEP_PPO)
++                                                ~
+Unexpected token ')' in expression or statement.
+At C:\xau_rl\ops\daemon_cleanup.ps1:13 char:54
++ [int]$KEEP_LOG_DAYS = int ? "30" : $env:KEEP_LOG_DAYS)
++                                                      ~
+Unexpected token ')' in expression or statement.
+At C:\xau_rl\ops\daemon_cleanup.ps1:14 char:60
++ [int]$INTERVAL_H = int ? "24" : $env:CLEANUP_INTERVAL_HOURS)
++                                                            ~
+Unexpected token ')' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : UnexpectedToken
+ 
+[INFO] Gotowe. Serwis 'xau_cleanup' dziaa.
