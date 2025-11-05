@@ -1,449 +1,105 @@
-<#
-install_all_services.ps1
-Instaluje/aktualizuje kompletny zestaw usług NSSM dla pipeline M5:
-- xau_paper_loop              (python -m paper_demo.paper_loop_mt5_demo)
-- xau_fetch_features          (co 10 min)
-- xau_mini_update             (co 6 h)
-- xau_nightly_report          (codziennie 23:00)
-- xau_nightly_train           (codziennie 00:30)
-- xau_feature_discovery       (co 3 dni 21:00)
-- xau_calibration             (co 3 dni 22:00)
-- xau_te_calendar             (codziennie 05:00)
-#>
+=== TAIL LOGÓW (jeśli istnieją) ===
 
-[CmdletBinding(SupportsShouldProcess=$true)]
-param(
-  [string]$RepoRoot    = "C:\xau_rl",
-  [string]$NssmPath    = "C:\nssm\nssm.exe",
-  [string]$PythonPath  = "$RepoRoot\.venv\Scripts\python.exe",
-  [string]$UserAccount = "$env:COMPUTERNAME\$env:USERNAME",
-  [securestring]$SecurePassword,
-  [string]$Password,          # niezalecane; użyj -SecurePassword
-  [switch]$UsePwsh7,          # host demonów: pwsh.exe (PS7) zamiast powershell.exe (PS5)
-  [string]$TEApiKey = ""      # opcjonalny TE_API_KEY dla xau_te_calendar
-)
+--- paper_loop.log ---
 
-#region helpers
-function Info($m){ Write-Host "[INFO] $m" -ForegroundColor Cyan }
-function Warn($m){ Write-Host "[WARN] $m" -ForegroundColor Yellow }
-function Err ($m){ Write-Host "[ERR ] $m" -ForegroundColor Red }
+--- paper_loop.err.log ---
 
-function Ensure-Dir($p){ if(-not(Test-Path $p)){ New-Item -ItemType Directory -Force -Path $p | Out-Null } }
+--- xau_fetch_features.err.log ---
 
-function PS-Host(){
-  if($UsePwsh7){
-    $p = "C:\Program Files\PowerShell\7\pwsh.exe"
-    if(Test-Path $p){ return $p }
-    Warn "PS7 nie znaleziony. Używam klasycznego PowerShell."
-  }
-  return "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
-}
+--- xau_fetch_features.out.log ---
 
-function Get-PlainPassword([securestring]$sec, [string]$plain){
-  if ($sec){
-    $BSTR = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
-    try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($BSTR) }
-    finally { if($BSTR -ne [IntPtr]::Zero){ [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR) } }
-  }
-  return $plain
-}
+--- xau_mini_update.out.log ---
 
-function NSSM-Check(){
-  if(-not (Test-Path $NssmPath)){ throw "Nie znaleziono NSSM: $NssmPath" }
-}
+--- xau_mini_update.err.log ---
 
-function NSSM-Install($name, $application, $parameters, $appDir, $envExtra, $stdout, $stderr, [switch]$DelayedStart, [switch]$NoConsole){
-  & $NssmPath stop   $name 2>$null | Out-Null
-  & $NssmPath remove $name confirm | Out-Null
-  & $NssmPath install $name $application | Out-Null
+--- xau_nightly_report.out.log ---
 
-  & $NssmPath set $name AppParameters  $parameters | Out-Null
-  & $NssmPath set $name AppDirectory   $appDir     | Out-Null
-  if($envExtra){ & $NssmPath set $name AppEnvironmentExtra $envExtra | Out-Null }
+--- xau_nightly_report.err.log ---
 
-  if($stdout){ & $NssmPath set $name AppStdout $stdout | Out-Null }
-  if($stderr){ & $NssmPath set $name AppStderr $stderr | Out-Null }
+--- mini_update.log ---
+[2025-11-05T12:37:18.5908740+01:00] [mini_update] bootstrap_alive
 
-  & $NssmPath set $name AppRotateFiles   1        | Out-Null
-  & $NssmPath set $name AppRotateOnline  1        | Out-Null
-  & $NssmPath set $name AppRotateBytes   10485760 | Out-Null
-  & $NssmPath set $name AppRotateSeconds 86400    | Out-Null
-  if($NoConsole){ & $NssmPath set $name AppNoConsole 1 | Out-Null }
-  if($DelayedStart){ & $NssmPath set $name Start SERVICE_DELAYED_AUTO_START | Out-Null }
-}
+[2025-11-05T12:37:18.6760989+01:00] [mini_update] start
 
-function NSSM-SetLogon($name, $user, $plainPassword){
-  if([string]::IsNullOrWhiteSpace($user)){ return }
-  if([string]::IsNullOrWhiteSpace($plainPassword)){
-    Warn ("Usługa ${name}: brak hasła do ObjectName=${user}. Ustaw ręcznie (nssm edit) lub podaj -SecurePassword.")
-    return
-  }
-  & $NssmPath set $name ObjectName $user $plainPassword | Out-Null
-}
+--- nightly_report.log ---
+[2025-11-05T12:37:25.2249997+01:00] [nightly_report] bootstrap_alive
 
-function Write-File($path, [string]$content){
-  $dir = Split-Path $path
-  Ensure-Dir $dir
-  Set-Content -LiteralPath $path -Value $content -Encoding UTF8
-  Unblock-File -LiteralPath $path -ErrorAction SilentlyContinue
-  Info "Zapisano: $path"
-}
-#endregion
+--- xau_calibration.out.log ---
 
-try{
-  NSSM-Check
-  Ensure-Dir $RepoRoot
-  $logs = Join-Path $RepoRoot "logs\services"
-  Ensure-Dir $logs
-  Ensure-Dir (Join-Path $RepoRoot "paper_demo")
+--- xau_calibration.err.log ---
 
-  if(-not (Test-Path $PythonPath)){ Warn "Brak Pythona venv: $PythonPath" }
+--- nightly_train.log ---
+[2025-11-05T12:37:26.4347273+01:00] [nightly_train] bootstrap_alive
 
-  #region DAEMONY: treści z poprawnym int.TotalSeconds i 1x bootstrap_alive
-  $psFetch = @'
-$ErrorActionPreference="Stop"
-$REPO="C:\xau_rl"; $PY="$REPO\.venv\Scripts\python.exe"
-$LOG="$REPO\logs\services\fetch_features.log"; $LOCK="$REPO\logs\services\fetch_features.lock"
-New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null; Set-Location $REPO
-if(-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0){
-  "[$(Get-Date -Format o)] [fetch_features] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
-}
-function Acquire-Lock { if(Test-Path $LOCK){$false}else{New-Item -ItemType File -Path $LOCK -Force|Out-Null;$true} }
-function Release-Lock { if(Test-Path $LOCK){Remove-Item $LOCK -Force} }
-function Run-Once {
-  & $PY "fetch__mt5_data.py"         *>> $LOG
-  & $PY "features\build_features.py" *>> $LOG
-}
-while($true){
-  $ts=Get-Date -Format o
-  try{
-    if(Acquire-Lock){
-      "`n[$ts] [fetch_features] start" | Out-File -FilePath $LOG -Append -Encoding utf8
-      Run-Once
-      "`n[$(Get-Date -Format o)] [fetch_features] done" | Out-File -FilePath $LOG -Append -Encoding utf8
-      Release-Lock
-    } else {
-      "`n[$ts] [fetch_features] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
-    }
-  }catch{
-    "[ERROR] $($_|Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
-    Release-Lock
-  }
-  Start-Sleep -Seconds 600
-}
-'@
+--- xau_te_calendar.out.log ---
 
-  $psMiniUpdate = @'
-$ErrorActionPreference="Stop"
-$REPO="C:\xau_rl"; $PY="$REPO\.venv\Scripts\python.exe"
-$LOG="$REPO\logs\services\mini_update.log"; $LOCK="$REPO\logs\services\mini_update.lock"
-New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null; Set-Location $REPO
-if(-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0){
-  "[$(Get-Date -Format o)] [mini_update] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
-}
-function Acquire-Lock { if(Test-Path $LOCK){$false}else{New-Item -ItemType File -Path $LOCK -Force|Out-Null;$true} }
-function Release-Lock { if(Test-Path $LOCK){Remove-Item $LOCK -Force} }
-function Run-Once { & $PY "ops\mini_update_ppo.py" "--timesteps" "300000" *>> $LOG }
-while($true){
-  $ts=Get-Date -Format o
-  try{
-    if(Acquire-Lock){
-      "`n[$ts] [mini_update] start" | Out-File -FilePath $LOG -Append -Encoding utf8
-      Run-Once
-      "`n[$(Get-Date -Format o)] [mini_update] done" | Out-File -FilePath $LOG -Append -Encoding utf8
-      Release-Lock
-    } else {
-      "`n[$ts] [mini_update] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
-    }
-  } catch {
-    "[ERROR] $($_|Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
-    Release-Lock
-  }
-  Start-Sleep -Seconds (6*3600)
-}
-'@
+--- xau_te_calendar.err.log ---
 
-  $psNightlyReport = @'
-$ErrorActionPreference="Stop"
-$REPO="C:\xau_rl"; $PY="$REPO\.venv\Scripts\python.exe"
-$LOG="$REPO\logs\services\nightly_report.log"; $LOCK="$REPO\logs\services\nightly_report.lock"
-New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null; Set-Location $REPO
-if(-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0){
-  "[$(Get-Date -Format o)] [nightly_report] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
-}
-function Acquire-Lock { if(Test-Path $LOCK){$false}else{New-Item -ItemType File -Path $LOCK -Force|Out-Null;$true} }
-function Release-Lock { if(Test-Path $LOCK){Remove-Item $LOCK -Force} }
-function Run-Once {
-  & $PY "rl\evaluate.py" "--out_dir" "reports" *>> $LOG
-  & $PY "utils\make_report.py"                 *>> $LOG
-}
-function Seconds-To-Next-2300 {
-  $now = Get-Date
-  $target = [DateTime]::Today.AddHours(23)
-  if ($now -ge $target) { $target = $target.AddDays(1) }
-  return int.TotalSeconds
-}
-while($true){
-  Start-Sleep -Seconds (Seconds-To-Next-2300)
-  $ts=Get-Date -Format o
-  try{
-    if(Acquire-Lock){
-      "`n[$ts] [nightly_report] start" | Out-File -FilePath $LOG -Append -Encoding utf8
-      Run-Once
-      "`n[$(Get-Date -Format o)] [nightly_report] done"  | Out-File -FilePath $LOG -Append -Encoding utf8
-      Release-Lock
-    } else {
-      "`n[$ts] [nightly_report] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
-    }
-  } catch {
-    "[ERROR] $($_|Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
-    Release-Lock
-  }
-  Start-Sleep -Seconds (24*3600 - 60)
-}
-'@
+--- xau_nightly_train.out.log ---
 
-  $psNightlyTrain = @'
-$ErrorActionPreference="Stop"
-$REPO="C:\xau_rl"; $PY="$REPO\.venv\Scripts\python.exe"
-$LOG="$REPO\logs\services\nightly_train.log"; $LOCK="$REPO\logs\services\nightly_train.lock"
-New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null; Set-Location $REPO
-if(-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0){
-  "[$(Get-Date -Format o)] [nightly_train] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
-}
-function Acquire-Lock { if(Test-Path $LOCK){$false}else{New-Item -ItemType File -Path $LOCK -Force|Out-Null;$true} }
-function Release-Lock { if(Test-Path $LOCK){Remove-Item $LOCK -Force} }
-function Run-Once {
-  & $PY "rl\train_ppo.py" "--timesteps" "1500000" *>> $LOG
-  & $PY "rl\evaluate.py" "--out_dir" "reports"    *>> $LOG
-  & $PY "utils\make_report.py"                    *>> $LOG
-  & $PY "ops\save_candidate.py"                   *>> $LOG
-  & $PY "ops\promote_challenger.py"               *>> $LOG
-}
-function Seconds-To-Next-0030 {
-  $now = Get-Date
-  $target = [DateTime]::Today.AddDays(1).AddHours(0).AddMinutes(30)
-  if ($now.Hour -lt 0 -or ($now.Hour -eq 0 -and $now.Minute -lt 30)) { $target = [DateTime]::Today.AddHours(0).AddMinutes(30) }
-  return int.TotalSeconds
-}
-while($true){
-  Start-Sleep -Seconds (Seconds-To-Next-0030)
-  $ts=Get-Date -Format o
-  try{
-    if(Acquire-Lock){
-      "`n[$ts] [nightly_train] start" | Out-File -FilePath $LOG -Append -Encoding utf8
-      Run-Once
-      "`n[$(Get-Date -Format o)] [nightly_train] done"  | Out-File -FilePath $LOG -Append -Encoding utf8
-      Release-Lock
-    } else {
-      "`n[$ts] [nightly_train] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
-    }
-  } catch {
-    "[ERROR] $($_|Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
-    Release-Lock
-  }
-  Start-Sleep -Seconds (24*3600 - 60)
-}
-'@
+--- xau_nightly_train.err.log ---
+int.TotalSeconds : The term 'int.TotalSeconds' is not recognized as the name of a cmdlet, function,
+ script file, or operable program. Check the spelling of the name, or if a path was included, verif
+y that the path is correct and try again.
+At C:\xau_rl\ops\daemon_nightly_train.ps1:21 char:10
++   return int.TotalSeconds
++          ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (int.TotalSeconds:String) [], ParentContainsErrorRec
+   ordException
+    + FullyQualifiedErrorId : CommandNotFoundException
 
-  $psFeatDisc = @'
-$ErrorActionPreference="Stop"
-$REPO="C:\xau_rl"; $PY="$REPO\.venv\Scripts\python.exe"
-$LOG="$REPO\logs\services\feature_discovery.log"; $LOCK="$REPO\logs\services\feature_discovery.lock"
-New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null; Set-Location $REPO
-if(-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0){
-  "[$(Get-Date -Format o)] [feature_discovery] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
-}
-function Acquire-Lock { if(Test-Path $LOCK){$false}else{New-Item -ItemType File -Path $LOCK -Force|Out-Null;$true} }
-function Release-Lock { if(Test-Path $LOCK){Remove-Item $LOCK -Force} }
-function Run-Once { & $PY "ops\feature_discovery_weekly.py" "--topK" "96" "--change_frac" "0.10" *>> $LOG }
-function Seconds-To-Next-21 {
-  $now = Get-Date
-  $target = [DateTime]::Today.AddHours(21)
-  if ($now -ge $target) { $target = $target.AddDays(1) }
-  return int.TotalSeconds
-}
-while($true){
-  Start-Sleep -Seconds (Seconds-To-Next-21)
-  $ts=Get-Date -Format o
-  try{
-    if(Acquire-Lock){
-      "`n[$ts] [feature_discovery] start" | Out-File -FilePath $LOG -Append -Encoding utf8
-      Run-Once
-      "`n[$(Get-Date -Format o)] [feature_discovery] done" | Out-File -FilePath $LOG -Append -Encoding utf8
-      Release-Lock
-    } else {
-      "`n[$ts] [feature_discovery] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
-    }
-  } catch {
-    "[ERROR] $($_|Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
-    Release-Lock
-  }
-  Start-Sleep -Seconds (3*24*3600 - 60)
-}
-'@
 
-  $psCalibration = @'
-$ErrorActionPreference="Stop"
-$REPO="C:\xau_rl"; $PY="$REPO\.venv\Scripts\python.exe"
-$LOG="$REPO\logs\services\calibration_3d.log"; $LOCK="$REPO\logs\services\calibration_3d.lock"
-New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null; Set-Location $REPO
-if(-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0){
-  "[$(Get-Date -Format o)] [calibration] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
-}
-function Acquire-Lock { if(Test-Path $LOCK){$false}else{New-Item -ItemType File -Path $LOCK -Force|Out-Null;$true} }
-function Release-Lock { if(Test-Path $LOCK){Remove-Item $LOCK -Force} }
-function Run-Once { & $PY "utils\calibration.py" "--apply" *>> $LOG }
-function Seconds-To-Next-22 {
-  $now = Get-Date
-  $target = [DateTime]::Today.AddHours(22)
-  if ($now -ge $target) { $target = $target.AddDays(1) }
-  return int.TotalSeconds
-}
-while($true){
-  Start-Sleep -Seconds (Seconds-To-Next-22)
-  $ts=Get-Date -Format o
-  try{
-    if(Acquire-Lock){
-      "`n[$ts] [calibration] start" | Out-File -FilePath $LOG -Append -Encoding utf8
-      Run-Once
-      "`n[$(Get-Date -Format o)] [calibration] done" | Out-File -FilePath $LOG -Append -Encoding utf8
-      Release-Lock
-    } else {
-      "`n[$ts] [calibration] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
-    }
-  } catch {
-    "[ERROR] $($_|Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
-    Release-Lock
-  }
-  Start-Sleep -Seconds (3*24*3600 - 60)
-}
-'@
+--- feature_discovery.log ---
+[2025-11-05T12:37:30.0560940+01:00] [feature_discovery] bootstrap_alive
 
-  $psTECalendar = @'
-$ErrorActionPreference="Stop"
-$REPO="C:\xau_rl"; $PY="$REPO\.venv\Scripts\python.exe"
-$LOG="$REPO\logs\services\te_calendar.log"; $LOCK="$REPO\logs\services\te_calendar.lock"
-New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null; Set-Location $REPO
-if(-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0){
-  "[$(Get-Date -Format o)] [te_calendar] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
-}
-function Acquire-Lock { if(Test-Path $LOCK){$false}else{New-Item -ItemType File -Path $LOCK -Force|Out-Null;$true} }
-function Release-Lock { if(Test-Path $LOCK){Remove-Item $LOCK -Force} }
-function Run-Once {
-  & $PY "save_te_calendar_cache.py" *>> $LOG
-  & $PY "features\build_features.py" *>> $LOG
-}
-function Seconds-To-Next-0500 {
-  $now = Get-Date
-  $target = [DateTime]::Today.AddHours(5)
-  if ($now -ge $target) { $target = $target.AddDays(1) }
-  return int.TotalSeconds
-}
-while($true){
-  Start-Sleep -Seconds (Seconds-To-Next-0500)
-  $ts=Get-Date -Format o
-  try{
-    if(Acquire-Lock){
-      "`n[$ts] [te_calendar] start" | Out-File -FilePath $LOG -Append -Encoding utf8
-      Run-Once
-      "`n[$(Get-Date -Format o)] [te_calendar] done"  | Out-File -FilePath $LOG -Append -Encoding utf8
-      Release-Lock
-    } else {
-      "`n[$ts] [te_calendar] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
-    }
-  } catch {
-    "[ERROR] $($_|Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
-    Release-Lock
-  }
-  Start-Sleep -Seconds (24*3600 - 60)
-}
-'@
+--- calibration_3d.log ---
+[2025-11-05T12:37:30.7172164+01:00] [calibration] bootstrap_alive
 
-  Write-File (Join-Path $RepoRoot "ops\daemon_fetch_features.ps1")        $psFetch
-  Write-File (Join-Path $RepoRoot "ops\daemon_mini_update.ps1")           $psMiniUpdate
-  Write-File (Join-Path $RepoRoot "ops\daemon_nightly_report.ps1")        $psNightlyReport
-  Write-File (Join-Path $RepoRoot "ops\daemon_nightly_train.ps1")         $psNightlyTrain
-  Write-File (Join-Path $RepoRoot "ops\daemon_feature_discovery.ps1")     $psFeatDisc
-  Write-File (Join-Path $RepoRoot "ops\daemon_calibration_biweekly.ps1")  $psCalibration
-  Write-File (Join-Path $RepoRoot "ops\daemon_te_calendar.ps1")           $psTECalendar
-  #endregion
+--- te_calendar.log ---
+[2025-11-05T12:37:33.2031187+01:00] [te_calendar] bootstrap_alive
 
-  #region install services
-  $psExe  = PS-Host
-  $envBase = "PYTHONPATH=$RepoRoot"
-  if([string]::IsNullOrWhiteSpace($TEApiKey)){
-    $envTE = $envBase
-  } else {
-    $envTE = "$envBase;TE_API_KEY=$TEApiKey"
-  }
-  $pw = Get-PlainPassword -sec $SecurePassword -plain $Password
+--- fetch_features.log ---
+[2025-11-05T12:37:15.6784595+01:00] [fetch_features] bootstrap_alive
 
-  # 1) paper loop
-  NSSM-Install "xau_paper_loop" $PythonPath "-m paper_demo.paper_loop_mt5_demo" $RepoRoot $envBase `
-               (Join-Path $logs "paper_loop.log") (Join-Path $logs "paper_loop.err.log") -DelayedStart:$true
-  NSSM-SetLogon "xau_paper_loop" $UserAccount $pw
+[2025-11-05T12:37:15.6896140+01:00] [fetch_features] start
+[MT5] Company=MetaQuotes Ltd. | TerminalName=MetaTrader 5 | Login=62719025 | Server=OANDATMS-MT5 | AccountName=PL/M62719025/PLN
 
-  # 2) fetch features
-  NSSM-Install "xau_fetch_features" $psExe "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $RepoRoot\ops\daemon_fetch_features.ps1" `
-               $RepoRoot $envBase (Join-Path $logs "xau_fetch_features.out.log") (Join-Path $logs "xau_fetch_features.err.log") -DelayedStart:$true -NoConsole
-  NSSM-SetLogon "xau_fetch_features" $UserAccount $pw
+[CFG] symbol=GOLD.pro tf=M5 keep_days=720 update_days=60
 
-  # 3) mini update
-  NSSM-Install "xau_mini_update" $psExe "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $RepoRoot\ops\daemon_mini_update.ps1" `
-               $RepoRoot $envBase (Join-Path $logs "xau_mini_update.out.log") (Join-Path $logs "xau_mini_update.err.log") -DelayedStart:$true -NoConsole
-  NSSM-SetLogon "xau_mini_update" $UserAccount $pw
+Saved bars: data/XAUUSD_M5.csv (11928)
 
-  # 4) nightly report
-  NSSM-Install "xau_nightly_report" $psExe "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $RepoRoot\ops\daemon_nightly_report.ps1" `
-               $RepoRoot $envBase (Join-Path $logs "xau_nightly_report.out.log") (Join-Path $logs "xau_nightly_report.err.log") -DelayedStart:$true -NoConsole
-  NSSM-SetLogon "xau_nightly_report" $UserAccount $pw
+Saved ticks: data/XAUUSD_ticks_sample.csv (698704)
 
-  # 5) nightly train
-  NSSM-Install "xau_nightly_train" $psExe "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $RepoRoot\ops\daemon_nightly_train.ps1" `
-               $RepoRoot $envBase (Join-Path $logs "xau_nightly_train.out.log") (Join-Path $logs "xau_nightly_train.err.log") -DelayedStart:$true -NoConsole
-  NSSM-SetLogon "xau_nightly_train" $UserAccount $pw
+Cost suggestions -> reports/costs_suggestion.yaml
 
-  # 6) feature discovery
-  NSSM-Install "xau_feature_discovery" $psExe "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $RepoRoot\ops\daemon_feature_discovery.ps1" `
-               $RepoRoot $envBase (Join-Path $logs "xau_feature_discovery.out.log") (Join-Path $logs "xau_feature_discovery.err.log") -DelayedStart:$true -NoConsole
-  NSSM-SetLogon "xau_feature_discovery" $UserAccount $pw
+[warn] fundamentals skipped: Brak external\fred\DGS10.csv. Zainstaluj fredapi lub umiee☺`☺ CSV.
 
-  # 7) calibration
-  NSSM-Install "xau_calibration" $psExe "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $RepoRoot\ops\daemon_calibration_biweekly.ps1" `
-               $RepoRoot $envBase (Join-Path $logs "xau_calibration.out.log") (Join-Path $logs "xau_calibration.err.log") -DelayedStart:$true -NoConsole
-  NSSM-SetLogon "xau_calibration" $UserAccount $pw
+Saved features and features_spec.json (with fundamentals/calendar if available).
 
-  # 8) TE calendar
-  NSSM-Install "xau_te_calendar" $psExe "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $RepoRoot\ops\daemon_te_calendar.ps1" `
-               $RepoRoot $envTE (Join-Path $logs "xau_te_calendar.out.log") (Join-Path $logs "xau_te_calendar.err.log") -DelayedStart:$true -NoConsole
-  NSSM-SetLogon "xau_te_calendar" $UserAccount $pw
-  #endregion
 
-  # start services
-  $svcs = @(
-    "xau_paper_loop","xau_fetch_features","xau_mini_update",
-    "xau_nightly_report","xau_nightly_train",
-    "xau_feature_discovery","xau_calibration","xau_te_calendar"
-  )
-  foreach($s in $svcs){ & $NssmPath start $s | Out-Null }
+[2025-11-05T12:37:35.0284232+01:00] [fetch_features] done
 
-  Start-Sleep -Seconds 2
-  Write-Host "`n=== STATUS USŁUG ==="
-  foreach($s in $svcs){ sc.exe query $s }
+--- xau_feature_discovery.out.log ---
 
-  Write-Host "`n=== TAIL LOGÓW (jeśli istnieją) ==="
-  Get-ChildItem "$logs\*.log" | Sort-Object LastWriteTime | %{
-    Write-Host "`n--- $($_.Name) ---"
-    try { Get-Content $_.FullName -Tail 20 } catch {}
-  }
+--- xau_feature_discovery.err.log ---
+int.TotalSeconds : The term 'int.TotalSeconds' is not recognized as the name of a cmdlet, function,
+ script file, or operable program. Check the spelling of the name, or if a path was included, verif
+y that the path is correct and try again.
+At C:\xau_rl\ops\daemon_feature_discovery.ps1:15 char:10
++   return int.TotalSeconds
++          ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (int.TotalSeconds:String) [], ParentContainsErrorRec
+   ordException
+    + FullyQualifiedErrorId : CommandNotFoundException
 
-  Info "Gotowe. W razie STATUS=PAUSED upewnij się, że Application wskazuje na 64-bit: $(PS-Host) i plik .ps1 istnieje."
-  if(-not $SecurePassword -and -not $Password){
-    Warn "Usługi uruchomione z ObjectName=${UserAccount} bez ustawionego hasła. Jeśli wymagane, ustaw je: nssm edit <service>."
-  }
-}
-catch{
-  Err $_
-  exit 1
-}
+int.TotalSeconds : The term 'int.TotalSeconds' is not recognized as the name of a cmdlet, function,
+ script file, or operable program. Check the spelling of the name, or if a path was included, verif
+y that the path is correct and try again.
+At C:\xau_rl\ops\daemon_feature_discovery.ps1:15 char:10
++   return int.TotalSeconds
++          ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (int.TotalSeconds:String) [], ParentContainsErrorRec
+   ordException
+    + FullyQualifiedErrorId : CommandNotFoundException
+
+[INFO] Gotowe. W razie STATUS=PAUSED upewnij się, że Application wskazuje na 64-bit: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe i plik .ps1 istnieje.
