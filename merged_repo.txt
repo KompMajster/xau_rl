@@ -1,6 +1,84 @@
+# encoding: utf-8
+$ErrorActionPreference = "Stop"
 
-[2025-11-05T14:22:19.5981499+01:00] [mini_update] start
+# === KONFIG (jak u Ciebie) ===
+$REPO = "C:\xau_rl"
+$PY   = "$REPO\.venv\Scripts\python.exe"
+$LOG  = "$REPO\logs\services\mini_update_ppo.log"
+$LOCK = "$REPO\logs\services\mini_update_ppo.lock"
 
-[2025-11-05T14:22:34.1782544+01:00] [mini_update] start
+# Przygotowanie
+New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null
+Set-Location $REPO
+if (-not (Test-Path -LiteralPath $PY)) { $PY = "python" }  # awaryjnie z PATH
 
-[2025-11-05T14:22:47.4268533+01:00] [mini_update] start
+# --- LOCK NA UCHWYCIE (bez wyścigu dwóch instancji) ---
+$script:LockHandle = $null
+function Acquire-Lock {
+    try {
+        $script:LockHandle = [System.IO.File]::Open(
+            $LOCK,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+        return $true
+    } catch {
+        return $false
+    }
+}
+function Release-Lock {
+    try {
+        if ($script:LockHandle) {
+            $script:LockHandle.Close()
+            $script:LockHandle.Dispose()
+            $script:LockHandle = $null
+        }
+    } catch {}
+    try { Remove-Item $LOCK -Force -ErrorAction SilentlyContinue } catch {}
+}
+
+function Log-Line([string]$msg){
+    try { Add-Content -LiteralPath $LOG -Value $msg -Encoding UTF8 } catch {}
+}
+
+function Run-Once {
+    Log-Line "`n[$(Get-Date -Format o)] [mini_update] start"
+
+    # --- DOKŁADNIE JAK W fetch_features: redirekcja *>> do TEGO SAMEGO LOGU ---
+    # Całe stdout+stderr z Pythona poleci do $LOG, bez pośrednich handlerów.
+    & $PY -u "ops\mini_update_ppo.py" "--timesteps" "300000" *>> $LOG
+
+    $code = $LASTEXITCODE
+    Log-Line "[$(Get-Date -Format o)] [mini_update] exit_code=$code"
+    if ($code -ne 0) { throw "mini_update failed with exit_code=$code (see log)" }
+    Log-Line "[$(Get-Date -Format o)] [mini_update] done"
+}
+
+# --- Globalny trap: nie pozwól wyjść bez logu, w razie wyjątku opóźnij pętlę ---
+trap {
+    try { Log-Line "[ERROR] TRAP: $($_.Exception.Message)`n$($_ | Out-String)" } catch {}
+    Start-Sleep -Seconds 5
+    continue
+}
+
+# === Pętla co 6h (jak w Twojej wersji) ===
+while ($true) {
+    try {
+        if (Acquire-Lock) {
+            try {
+                Run-Once
+            } finally {
+                Release-Lock
+            }
+        } else {
+            Log-Line "`n[$(Get-Date -Format o)] [mini_update] skipped (locked)"
+        }
+    } catch {
+        Log-Line "[ERROR] $($_.Exception.Message)`n$($_ | Out-String)"
+        Release-Lock
+        Start-Sleep -Seconds 5  # bezpiecznik żeby NSSM nie „karuzelował”
+    }
+
+    Start-Sleep -Seconds (6*3600)  # co 6 godzin
+}
