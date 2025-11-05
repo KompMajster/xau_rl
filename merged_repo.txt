@@ -1,183 +1,135 @@
-#requires -Version 5.1
-<#
-    C:\xau_rl\ops\install_services.ps1
-    INSTALUJE WYŁĄCZNIE: xau_cleanup (sprzątanie PPO_xxx i logów usług)
-    PS 5.1-compatible, bez CmdletBinding/param (stabilne parsowanie).
-#>
-
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Stop'
-
-# ======================
-# ===   K O N F I G  ===
-# ======================
-$RepoRoot            = 'C:\xau_rl'          # katalog repo
-$NssmPath            = 'C:\nssm\nssm.exe'   # pełna ścieżka do nssm.exe
-$UsePwsh7            = $false               # true => użyj PowerShell 7 jako hosta usługi
-
-# Polityka retencji (możesz zmienić przed uruchomieniem)
-$KeepPPO             = 15                   # zachowaj N najnowszych folderów PPO_xxx
-$KeepLogDays         = 21                   # usuń logi usług starsze niż N dni
-$CleanupIntervalHours= 6                    # pętla cleanup co N godzin
-
-# ==========================
-# ===  FUNKCJE POMOCNICZE ==
-# ==========================
-function Info($m){ Write-Host "[INFO] $m" -ForegroundColor Cyan }
-function Warn($m){ Write-Host "[WARN] $m" -ForegroundColor Yellow }
-function Err ($m){ Write-Host "[ERR ] $m" -ForegroundColor Red }
-function Ensure-Dir($p){ if(-not(Test-Path -LiteralPath $p)){ New-Item -ItemType Directory -Force -Path $p | Out-Null } }
-
-function PS-Host(){
-    if($UsePwsh7){
-        $p = "C:\Program Files\PowerShell\7\pwsh.exe"
-        if(Test-Path $p){ return $p }
-        Warn "PowerShell 7 nie znaleziony. Używam klasycznego PowerShell 5.1."
-    }
-    return "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
-}
-
-# ======================
-# ===  WALIDACJE    ===
-# ======================
-if (-not (Test-Path -LiteralPath $NssmPath)) { throw "Nie znaleziono NSSM: $NssmPath" }
-Ensure-Dir $RepoRoot
-$logsDir = Join-Path $RepoRoot 'logs\services'
-Ensure-Dir $logsDir
-
-# ==============================
-# ===  GENERUJ daemon_cleanup ==
-# ==============================
-$CleanupServiceName = "xau_cleanup"
-$CleanupDisplayName = "XAU RL - Cleanup"
-$CleanupDescription = "Sprzątanie folderów PPO_xxx i logów usług zgodnie z polityką retencji."
-$CleanupScriptPath  = Join-Path $RepoRoot "ops\daemon_cleanup.ps1"
-
-Ensure-Dir (Split-Path $CleanupScriptPath)
-
-# Uwaga: czysty PS 5.1 — brak operatora '?:'
-$cleanupContent = @'
-# encoding: utf-8
-$ErrorActionPreference = "Stop"
-
-# === KONFIG z ENV (z domyślnymi wartościami) ===
-$REPO = $env:XAU_REPO
-if ([string]::IsNullOrWhiteSpace($REPO)) { $REPO = "C:\xau_rl" }
-
-$PPO_DIR  = Join-Path $REPO "logs\ppo_gold_m5"
-$SERV_DIR = Join-Path $REPO "logs\services"
-$MODELS   = Join-Path $REPO "models"
-New-Item -ItemType Directory -Force -Path $MODELS | Out-Null
-
-[int]$KEEP_FOLDERS = 10
-if ($env:KEEP_PPO -and $env:KEEP_PPO -match '^\d+$') { $KEEP_FOLDERS = [int]$env:KEEP_PPO }
-
-[int]$KEEP_LOG_DAYS = 30
-if ($env:KEEP_LOG_DAYS -and $env:KEEP_LOG_DAYS -match '^\d+$') { $KEEP_LOG_DAYS = [int]$env:KEEP_LOG_DAYS }
-
-[int]$INTERVAL_H = 24
-if ($env:CLEANUP_INTERVAL_HOURS -and $env:CLEANUP_INTERVAL_HOURS -match '^\d+$') { $INTERVAL_H = [int]$env:CLEANUP_INTERVAL_HOURS }
-
-function Log([string]$m){ $ts = Get-Date -Format o; Write-Host "[$ts] [cleanup] $m" }
-
-function Cleanup-PPOFolders {
-    Log "Czyszczenie folderów PPO ($PPO_DIR) – zachowuję $KEEP_FOLDERS"
-    if (-not (Test-Path $PPO_DIR)) { return }
-    $folders  = Get-ChildItem $PPO_DIR -Directory | Sort-Object LastWriteTime -Descending
-    $toRemove = $folders | Select-Object -Skip $KEEP_FOLDERS
-    foreach ($f in $toRemove) {
-        try {
-            $best = Join-Path $f.FullName "best_model.zip"
-            if (Test-Path $best) {
-                $dest = Join-Path $MODELS ("best_" + $f.Name + ".zip")
-                Copy-Item $best $dest -Force
-                Log "Zapisano kopię modelu: $dest"
-            }
-            Remove-Item $f.FullName -Recurse -Force
-            Log "Usunięto folder: $($f.Name)"
-        } catch {
-            Log "Błąd usuwania $($f.Name): $($_.Exception.Message)"
-        }
-    }
-}
-
-function Cleanup-ServiceLogs {
-    Log "Czyszczenie logów usług starszych niż $KEEP_LOG_DAYS dni ($SERV_DIR)"
-    if (-not (Test-Path $SERV_DIR)) { return }
-    $cutoff = (Get-Date).AddDays(-$KEEP_LOG_DAYS)
-    Get-ChildItem $SERV_DIR -File | Where-Object { $_.LastWriteTime -lt $cutoff } |
-        ForEach-Object {
-            try {
-                Remove-Item $_.FullName -Force
-                Log "Usunięto log: $($_.Name)"
-            } catch {
-                Log "Błąd usuwania logu $($_.Name): $($_.Exception.Message)"
-            }
-        }
-}
-
-while ($true) {
-    try {
-        Log "Start cleanup"
-        Cleanup-PPOFolders
-        Cleanup-ServiceLogs
-        Log "Cleanup zakończony"
-    } catch {
-        Log "Błąd cleanup: $($_.Exception.Message)"
-    }
-    Start-Sleep -Seconds ($INTERVAL_H * 3600)
-}
-'@
-
-Set-Content -LiteralPath $CleanupScriptPath -Value $cleanupContent -Encoding UTF8
-Unblock-File -LiteralPath $CleanupScriptPath -ErrorAction SilentlyContinue
-Info "Zapisano/odświeżono: $CleanupScriptPath"
-
-# ==================================
-# ===  INSTALACJA USŁUGI CLEANUP ===
-# ==================================
-$psExe = PS-Host
-
-Info "Konfiguruję usługę $CleanupServiceName ..."
-& $NssmPath install $CleanupServiceName $psExe `
-    -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $CleanupScriptPath
-
-& $NssmPath set $CleanupServiceName DisplayName  $CleanupDisplayName
-& $NssmPath set $CleanupServiceName Description  $CleanupDescription
-& $NssmPath set $CleanupServiceName AppDirectory $RepoRoot
-
-# Parametry retencji jako ENV (łatwa zmiana bez edycji pliku)
-$envExtra = @(
-    "XAU_REPO=$RepoRoot",
-    "KEEP_PPO=$KeepPPO",
-    "KEEP_LOG_DAYS=$KeepLogDays",
-    "CLEANUP_INTERVAL_HOURS=$CleanupIntervalHours"
-) -join ';'
-& $NssmPath set $CleanupServiceName AppEnvironmentExtra $envExtra
-
-# Logi usługi
-& $NssmPath set $CleanupServiceName AppStdout (Join-Path $logsDir "xau_cleanup.out.log")
-& $NssmPath set $CleanupServiceName AppStderr (Join-Path $logsDir "xau_cleanup.err.log")
-
-# Auto-start + restart na błędach (standard)
-& $NssmPath set $CleanupServiceName Start SERVICE_AUTO_START
-& $NssmPath set $CleanupServiceName AppThrottle 1500
-& $NssmPath set $CleanupServiceName AppExit Default Restart
-
-# Restart/Start
-try { & $NssmPath stop $CleanupServiceName | Out-Null } catch {}
-& $NssmPath start $CleanupServiceName | Out-Null
-
-Write-Host "`n=== STATUS USŁUGI ==="
-sc.exe query $CleanupServiceName
-
-Write-Host "`n=== OSTATNIE LOGI CLEANUP (jeśli istnieją) ==="
-Get-ChildItem "$logsDir\*.log" -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -like "xau_cleanup*.log" } |
-    Sort-Object LastWriteTime |
-    ForEach-Object {
-        Write-Host "`n--- $($_.Name) ---"
-        try { Get-Content $_.FullName -Tail 50 } catch {}
-    }
-
-Info "Gotowe. Serwis '$CleanupServiceName' działa."
+At C:\xau_rl\ops\daemon_cleanup.ps1:12 char:48
++ [int]$KEEP_FOLDERS = int ? "10" : $env:KEEP_PPO)
++                                                ~
+Unexpected token ')' in expression or statement.
+At C:\xau_rl\ops\daemon_cleanup.ps1:13 char:54
++ [int]$KEEP_LOG_DAYS = int ? "30" : $env:KEEP_LOG_DAYS)
++                                                      ~
+Unexpected token ')' in expression or statement.
+At C:\xau_rl\ops\daemon_cleanup.ps1:14 char:60
++ [int]$INTERVAL_H = int ? "24" : $env:CLEANUP_INTERVAL_HOURS)
++                                                            ~
+Unexpected token ')' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : UnexpectedToken
+ 
+At C:\xau_rl\ops\daemon_cleanup.ps1:12 char:48
++ [int]$KEEP_FOLDERS = int ? "10" : $env:KEEP_PPO)
++                                                ~
+Unexpected token ')' in expression or statement.
+At C:\xau_rl\ops\daemon_cleanup.ps1:13 char:54
++ [int]$KEEP_LOG_DAYS = int ? "30" : $env:KEEP_LOG_DAYS)
++                                                      ~
+Unexpected token ')' in expression or statement.
+At C:\xau_rl\ops\daemon_cleanup.ps1:14 char:60
++ [int]$INTERVAL_H = int ? "24" : $env:CLEANUP_INTERVAL_HOURS)
++                                                            ~
+Unexpected token ')' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : UnexpectedToken
+ 
+At C:\xau_rl\ops\daemon_cleanup.ps1:12 char:48
++ [int]$KEEP_FOLDERS = int ? "10" : $env:KEEP_PPO)
++                                                ~
+Unexpected token ')' in expression or statement.
+At C:\xau_rl\ops\daemon_cleanup.ps1:13 char:54
++ [int]$KEEP_LOG_DAYS = int ? "30" : $env:KEEP_LOG_DAYS)
++                                                      ~
+Unexpected token ')' in expression or statement.
+At C:\xau_rl\ops\daemon_cleanup.ps1:14 char:60
++ [int]$INTERVAL_H = int ? "24" : $env:CLEANUP_INTERVAL_HOURS)
++                                                            ~
+Unexpected token ')' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : UnexpectedToken
+ 
+At C:\xau_rl\ops\daemon_cleanup.ps1:12 char:48
++ [int]$KEEP_FOLDERS = int ? "10" : $env:KEEP_PPO)
++                                                ~
+Unexpected token ')' in expression or statement.
+At C:\xau_rl\ops\daemon_cleanup.ps1:13 char:54
++ [int]$KEEP_LOG_DAYS = int ? "30" : $env:KEEP_LOG_DAYS)
++                                                      ~
+Unexpected token ')' in expression or statement.
+At C:\xau_rl\ops\daemon_cleanup.ps1:14 char:60
++ [int]$INTERVAL_H = int ? "24" : $env:CLEANUP_INTERVAL_HOURS)
++                                                            ~
+Unexpected token ')' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : UnexpectedToken
+ 
+At C:\xau_rl\ops\daemon_cleanup.ps1:12 char:48
++ [int]$KEEP_FOLDERS = int ? "10" : $env:KEEP_PPO)
++                                                ~
+Unexpected token ')' in expression or statement.
+At C:\xau_rl\ops\daemon_cleanup.ps1:13 char:54
++ [int]$KEEP_LOG_DAYS = int ? "30" : $env:KEEP_LOG_DAYS)
++                                                      ~
+Unexpected token ')' in expression or statement.
+At C:\xau_rl\ops\daemon_cleanup.ps1:14 char:60
++ [int]$INTERVAL_H = int ? "24" : $env:CLEANUP_INTERVAL_HOURS)
++                                                            ~
+Unexpected token ')' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : UnexpectedToken
+ 
+At C:\xau_rl\ops\daemon_cleanup.ps1:12 char:48
++ [int]$KEEP_FOLDERS = int ? "10" : $env:KEEP_PPO)
++                                                ~
+Unexpected token ')' in expression or statement.
+At C:\xau_rl\ops\daemon_cleanup.ps1:13 char:54
++ [int]$KEEP_LOG_DAYS = int ? "30" : $env:KEEP_LOG_DAYS)
++                                                      ~
+Unexpected token ')' in expression or statement.
+At C:\xau_rl\ops\daemon_cleanup.ps1:14 char:60
++ [int]$INTERVAL_H = int ? "24" : $env:CLEANUP_INTERVAL_HOURS)
++                                                            ~
+Unexpected token ')' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : UnexpectedToken
+ 
+At C:\xau_rl\ops\daemon_cleanup.ps1:12 char:48
++ [int]$KEEP_FOLDERS = int ? "10" : $env:KEEP_PPO)
++                                                ~
+Unexpected token ')' in expression or statement.
+At C:\xau_rl\ops\daemon_cleanup.ps1:13 char:54
++ [int]$KEEP_LOG_DAYS = int ? "30" : $env:KEEP_LOG_DAYS)
++                                                      ~
+Unexpected token ')' in expression or statement.
+At C:\xau_rl\ops\daemon_cleanup.ps1:14 char:60
++ [int]$INTERVAL_H = int ? "24" : $env:CLEANUP_INTERVAL_HOURS)
++                                                            ~
+Unexpected token ')' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : UnexpectedToken
+ 
+At C:\xau_rl\ops\daemon_cleanup.ps1:12 char:48
++ [int]$KEEP_FOLDERS = int ? "10" : $env:KEEP_PPO)
++                                                ~
+Unexpected token ')' in expression or statement.
+At C:\xau_rl\ops\daemon_cleanup.ps1:13 char:54
++ [int]$KEEP_LOG_DAYS = int ? "30" : $env:KEEP_LOG_DAYS)
++                                                      ~
+Unexpected token ')' in expression or statement.
+At C:\xau_rl\ops\daemon_cleanup.ps1:14 char:60
++ [int]$INTERVAL_H = int ? "24" : $env:CLEANUP_INTERVAL_HOURS)
++                                                            ~
+Unexpected token ')' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : UnexpectedToken
+ 
+At C:\xau_rl\ops\daemon_cleanup.ps1:12 char:48
++ [int]$KEEP_FOLDERS = int ? "10" : $env:KEEP_PPO)
++                                                ~
+Unexpected token ')' in expression or statement.
+At C:\xau_rl\ops\daemon_cleanup.ps1:13 char:54
++ [int]$KEEP_LOG_DAYS = int ? "30" : $env:KEEP_LOG_DAYS)
++                                                      ~
+Unexpected token ')' in expression or statement.
+At C:\xau_rl\ops\daemon_cleanup.ps1:14 char:60
++ [int]$INTERVAL_H = int ? "24" : $env:CLEANUP_INTERVAL_HOURS)
++                                                            ~
+Unexpected token ')' in expression or statement.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : UnexpectedToken
+ 
