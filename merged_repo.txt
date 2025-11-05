@@ -1,152 +1,59 @@
-[2025-11-05T14:38:26.8837347+01:00] [mini_update] start
-[ m i n i _ u p d a t e ]   T r a i n i n g   o n   5 7 1 8   r o w s   ( ~ 1 2 0 d ) ,   t i m e s t e p s = 3 0 0 0 0 0 
- 
- U s i n g   c p u   d e v i c e 
- 
- L o g g i n g   t o   l o g s / p p o _ g o l d _ m 5 \ P P O _ 1 1 7 
- 
- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
- 
- |   r o l l o u t /                       |                     | 
- 
- |         e p _ l e n _ m e a n           |   5 6 8             | 
- 
- |         e p _ r e w _ m e a n           |   - 0 . 2 0 1       | 
- 
- |   t i m e /                             |                     | 
- 
- |         f p s                           |   1 8 7             | 
- 
- |         i t e r a t i o n s             |   1                 | 
- 
- |         t i m e _ e l a p s e d         |   2 1               | 
- 
- |         t o t a l _ t i m e s t e p s   |   4 0 9 6           | 
- 
- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
- 
- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
- 
- |   r o l l o u t /                                 |                           | 
- 
- |         e p _ l e n _ m e a n                     |   6 0 5                   | 
- 
- |         e p _ r e w _ m e a n                     |   - 0 . 2 0 1             | 
- 
- |   t i m e /                                       |                           | 
- 
- |         f p s                                     |   1 8 1                   | 
- 
- |         i t e r a t i o n s                       |   2                       | 
- 
- |         t i m e _ e l a p s e d                   |   4 5                     | 
- 
- |         t o t a l _ t i m e s t e p s             |   8 1 9 2                 | 
- 
- |   t r a i n /                                     |                           | 
- 
- |         a p p r o x _ k l                         |   0 . 0 1 4 0 0 7 1 3 6   | 
- 
- |         c l i p _ f r a c t i o n                 |   0 . 1 2 2               | 
- 
- |         c l i p _ r a n g e                       |   0 . 2                   | 
- 
- |         e n t r o p y _ l o s s                   |   - 1 . 0 9               | 
- 
- |         e x p l a i n e d _ v a r i a n c e       |   - 0 . 3 4 2             | 
- 
- |         l e a r n i n g _ r a t e                 |   0 . 0 0 0 3             | 
- 
- |         l o s s                                   |   - 0 . 0 4 9 3           | 
- 
- |         n _ u p d a t e s                         |   1 0                     | 
- 
- |         p o l i c y _ g r a d i e n t _ l o s s   |   - 0 . 0 1 8             | 
- 
- |         v a l u e _ l o s s                       |   0 . 0 4 1 6             | 
- 
- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
- 
- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
- 
- |   r o l l o u t /                                 |                           | 
- 
- |         e p _ l e n _ m e a n                     |   6 4 5                   | 
- 
- |         e p _ r e w _ m e a n                     |   - 0 . 2 0 1             | 
- 
- |   t i m e /                                       |                           | 
- 
- |         f p s                                     |   1 7 8                   | 
- 
- |         i t e r a t i o n s                       |   3                       | 
- 
- |         t i m e _ e l a p s e d                   |   6 8                     | 
- 
- |         t o t a l _ t i m e s t e p s             |   1 2 2 8 8               | 
- 
- |   t r a i n /                                     |                           | 
- 
- |         a p p r o x _ k l                         |   0 . 0 1 7 2 7 2 7 7 4   | 
- 
- |         c l i p _ f r a c t i o n                 |   0 . 2 2 7               | 
- 
- |         c l i p _ r a n g e                       |   0 . 2                   | 
- 
- |         e n t r o p y _ l o s s                   |   - 1 . 0 7               | 
- 
- |         e x p l a i n e d _ v a r i a n c e       |   0 . 6 1 2               | 
- 
- |         l e a r n i n g _ r a t e                 |   0 . 0 0 0 3             | 
- 
- |         l o s s                                   |   - 0 . 0 5 3 4           | 
- 
- |         n _ u p d a t e s                         |   2 0                     | 
- 
- |         p o l i c y _ g r a d i e n t _ l o s s   |   - 0 . 0 3 0 7           | 
- 
- |         v a l u e _ l o s s                       |   0 . 0 3 6 3             | 
- 
- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
- 
- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
- 
- |   r o l l o u t /                                 |                           | 
- 
- |         e p _ l e n _ m e a n                     |   6 9 7                   | 
- 
- |         e p _ r e w _ m e a n                     |   - 0 . 2 0 1             | 
- 
- |   t i m e /                                       |                           | 
- 
- |         f p s                                     |   1 7 8                   | 
- 
- |         i t e r a t i o n s                       |   4                       | 
- 
- |         t i m e _ e l a p s e d                   |   9 1                     | 
- 
- |         t o t a l _ t i m e s t e p s             |   1 6 3 8 4               | 
- 
- |   t r a i n /                                     |                           | 
- 
- |         a p p r o x _ k l                         |   0 . 0 1 8 3 0 6 9 3 7   | 
- 
- |         c l i p _ f r a c t i o n                 |   0 . 2 4 6               | 
- 
- |         c l i p _ r a n g e                       |   0 . 2                   | 
- 
- |         e n t r o p y _ l o s s                   |   - 1 . 0 3               | 
- 
- |         e x p l a i n e d _ v a r i a n c e       |   0 . 8 3 7               | 
- 
- |         l e a r n i n g _ r a t e                 |   0 . 0 0 0 3             | 
- 
- |         l o s s                                   |   - 0 . 0 7 9 4           | 
- 
- |         n _ u p d a t e s                         |   3 0                     | 
- 
- |         p o l i c y _ g r a d i e n t _ l o s s   |   - 0 . 0 3 6 4           | 
- 
- |         v a l u e _ l o s s                       |   0 . 0 2 3 5             | 
- 
- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+#requires -Version 5.1
+<# 
+    C:\xau_rl\ops\install_services.ps1
+    Instalacja/aktualizacja usługi NSSM dla mini_update_ppo (XAU RL)
+#>
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+#region KONFIG
+$SERVICE_NAME   = 'XAU_RL_MiniUpdatePPO'
+$DISPLAY_NAME   = 'XAU RL - Mini Update PPO'
+$DESCRIPTION    = 'Bezpieczny daemon mini-update PPO (single instance, log rotation).'
+$BASE_DIR       = 'C:\xau_rl'
+$SCRIPT_PATH    = Join-Path $BASE_DIR 'ops\daemon_mini_update.ps1'
+$NSSM_EXE       = 'C:\nssm\nssm.exe'    # jeśli nie w PATH, podaj pełną ścieżkę
+$POWERSHELL_EXE = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+#endregion
+
+if (-not (Get-Command $NSSM_EXE -ErrorAction SilentlyContinue)) {
+    throw "Nie znaleziono $NSSM_EXE w PATH. Zainstaluj NSSM i podaj pełną ścieżkę."
+}
+if (-not (Test-Path -LiteralPath $SCRIPT_PATH)) {
+    throw "Brak pliku: $SCRIPT_PATH"
+}
+
+# Parametry wywołania PowerShell dla usługi
+$psArgs = @(
+    '-NoProfile',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', $SCRIPT_PATH
+)
+
+# Instaluj lub aktualizuj
+Write-Host "Konfiguruję usługę $SERVICE_NAME ..."
+
+# Utwórz/zmień
+& $NSSM_EXE install $SERVICE_NAME $POWERSHELL_EXE $psArgs
+& $NSSM_EXE set     $SERVICE_NAME DisplayName  $DISPLAY_NAME
+& $NSSM_EXE set     $SERVICE_NAME Description  $DESCRIPTION
+& $NSSM_EXE set     $SERVICE_NAME AppDirectory $BASE_DIR
+
+# Automatyczny restart na błędach
+& $NSSM_EXE set     $SERVICE_NAME Start SERVICE_AUTO_START
+& $NSSM_EXE set     $SERVICE_NAME AppStopMethodSkip 0
+& $NSSM_EXE set     $SERVICE_NAME AppThrottle 1500
+& $NSSM_EXE set     $SERVICE_NAME AppExit Default Restart
+
+# Czyść własne przekierowania NSSM (logi przejmuje skrypt)
+& $NSSM_EXE set     $SERVICE_NAME AppStdout ""
+& $NSSM_EXE set     $SERVICE_NAME AppStderr ""
+
+# Start/Restart
+try {
+    & $NSSM_EXE stop  $SERVICE_NAME | Out-Null
+} catch {}
+& $NSSM_EXE start $SERVICE_NAME | Out-Null
+
+Write-Host "Usługa $SERVICE_NAME została (re)zainstalowana i uruchomiona."
