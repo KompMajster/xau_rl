@@ -1,7 +1,110 @@
-[2025-11-05T13:36:13.1179168+01:00] [mini_update] start
-[ERROR] You cannot call a method on a null-valued expression.
-At C:\xau_rl\ops\daemon_mini_update.ps1:41 char:5
-+     $psi.ArgumentList.Add('-u')
-+     ~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : InvalidOperation: (:) [], RuntimeException
-    + FullyQualifiedErrorId : InvokeMethodOnNull
+# encoding: utf-8
+$ErrorActionPreference = "Stop"
+
+# === KONFIG ===
+$REPO = "C:\xau_rl"
+$PY   = "$REPO\.venv\Scripts\python.exe"
+$LOG  = "$REPO\logs\services\mini_update_ppo.log"
+$LOCK = "$REPO\logs\services\mini_update_ppo.lock"
+
+New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null
+Set-Location $REPO
+
+if (-not (Test-Path -LiteralPath $PY)) { $PY = "python" }
+
+# --- util: szybki test zapisu do logu ---
+function Test-LogWritable([string]$path, [int]$retries = 10, [int]$delayMs = 200){
+    for($i=0;$i -lt $retries;$i++){
+        try{
+            $fs = [System.IO.File]::Open($path,
+                [System.IO.FileMode]::OpenOrCreate,
+                [System.IO.FileAccess]::Write,
+                [System.IO.FileShare]::ReadWrite)  # nie blokujemy czytających
+            $fs.Close()
+            return $true
+        } catch {
+            Start-Sleep -Milliseconds $delayMs
+        }
+    }
+    return $false
+}
+
+# --- Lock na uchwycie (single-run) ---
+$script:LockHandle = $null
+function Acquire-Lock {
+    try {
+        $script:LockHandle = [System.IO.File]::Open(
+            $LOCK,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        ); return $true
+    } catch { return $false }
+}
+function Release-Lock {
+    try { if ($script:LockHandle){ $script:LockHandle.Close(); $script:LockHandle.Dispose(); $script:LockHandle=$null } } catch {}
+    try { Remove-Item $LOCK -Force -ErrorAction SilentlyContinue } catch {}
+}
+
+function Log-Line([string]$msg){
+    try { Add-Content -LiteralPath $LOG -Value $msg -Encoding UTF8 } catch {}
+}
+
+function Run-Once {
+    # upewnij się, że log jest zapisywalny (np. AV może trzymać uchwyt)
+    if (-not (Test-LogWritable -path $LOG -retries 20 -delayMs 250)) {
+        throw "Nie mogę uzyskać dostępu do logu: $LOG (sprawdź uprawnienia/AV/backup)."
+    }
+
+    Log-Line "`n[$(Get-Date -Format o)] [mini_update] start"
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName               = $PY
+    $psi.WorkingDirectory       = $REPO
+    $psi.UseShellExecute        = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError  = $true
+    $psi.CreateNoWindow         = $true
+    $psi.Arguments = '-u "ops\mini_update_ppo.py" --timesteps 300000'
+
+    $p = New-Object System.Diagnostics.Process
+    $p.StartInfo = $psi
+
+    $outHandler = {
+        param($s,$e)
+        if ($e.Data -ne $null) { try { Add-Content -LiteralPath $using:LOG -Value $e.Data -Encoding UTF8 } catch {} }
+    }
+    $errHandler = {
+        param($s,$e)
+        if ($e.Data -ne $null) { try { Add-Content -LiteralPath $using:LOG -Value $e.Data -Encoding UTF8 } catch {} }
+    }
+
+    [void]$p.Start()
+    $p.add_OutputDataReceived($outHandler)
+    $p.add_ErrorDataReceived($errHandler)
+    $p.BeginOutputReadLine()
+    $p.BeginErrorReadLine()
+
+    $p.WaitForExit()
+    $p.CancelOutputRead()
+    $p.CancelErrorRead()
+
+    $code = $p.ExitCode
+    Log-Line "[$(Get-Date -Format o)] [mini_update] exit_code=$code"
+    if ($code -ne 0) { throw "mini_update failed with exit_code=$code (see log)" }
+    Log-Line "[$(Get-Date -Format o)] [mini_update] done"
+}
+
+while ($true) {
+    try {
+        if (Acquire-Lock) {
+            try { Run-Once } finally { Release-Lock }
+        } else {
+            Log-Line "`n[$(Get-Date -Format o)] [mini_update] skipped (locked)"
+        }
+    } catch {
+        Log-Line "[ERROR] $($_ | Out-String)"
+        Release-Lock
+    }
+    Start-Sleep -Seconds (6*3600)
+}
