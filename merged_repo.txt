@@ -1,70 +1,141 @@
-$ErrorActionPreference="Stop"
-$REPO="C:\xau_rl"; $PY="$REPO\.venv\Scripts\python.exe"
-$LOG="$REPO\logs\services\feature_discovery.log"; $LOCK="$REPO\logs\services\feature_discovery.lock"
-New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null; Set-Location $REPO
-if(-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0){
-  "[$(Get-Date -Format o)] [feature_discovery] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
-}
-function Acquire-Lock { if(Test-Path $LOCK){$false}else{New-Item -ItemType File -Path $LOCK -Force|Out-Null;$true} }
-function Release-Lock { if(Test-Path $LOCK){Remove-Item $LOCK -Force} }
-function Run-Once { & $PY "ops\feature_discovery_weekly.py" "--topK" "96" "--change_frac" "0.10" *>> $LOG }
-function Seconds-To-Next-21 {
-  $now = Get-Date
-  $target = [DateTime]::Today.AddHours(21)
-  if ($now -ge $target) { $target = $target.AddDays(1) }
-  $diff = $target - $now            # TimeSpan
-  return ([int]$diff.TotalSeconds)  # zwracamy liczbę sekund (int)
-}
-while($true){
-  Start-Sleep -Seconds (Seconds-To-Next-21)
-  $ts=Get-Date -Format o
-  try{
-    if(Acquire-Lock){
-      "`n[$ts] [feature_discovery] start" | Out-File -FilePath $LOG -Append -Encoding utf8
-      Run-Once
-      "`n[$(Get-Date -Format o)] [feature_discovery] done" | Out-File -FilePath $LOG -Append -Encoding utf8
-      Release-Lock
-    } else {
-      "`n[$ts] [feature_discovery] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
-    }
-  } catch {
-    "[ERROR] $($_|Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
-    Release-Lock
-  }
-  Start-Sleep -Seconds (23*3600)
-}
+symbol: GOLD.pro
+timeframe: M5
+history_days: 720
+window: 128
+mt5:
+  bars_chunk: 100000
+  update_days: 60
+files:
+  bars_csv: data/XAUUSD_M5.csv
+  ticks_csv: data/XAUUSD_ticks_sample.csv
+  features_csv: data/XAUUSD_M5_features.csv
+  model_path: models/ppo_xauusd_m5.zip
+  vecnorm_path: models/vecnorm_xauusd_m5.pkl
+costs:
+  spread_abs: 0.37
+  commission_rate: 0.0001
+  slippage_k: 0.0
+env:
+  reward_mode: pct
+  flip_penalty: 0.002
+  trade_hours_utc:
+  - 06:00
+  - '20:00'
+  enforce_flat_outside_hours: true
+  min_equity: 0.8
+fundamentals:
+  usd_series_id: DTWEXBGS
+  gpr_csv: external/gpr/gpr.csv
+  cot_csv: external/cot_gold.csv
+calendar:
+  calendar_csv: external/calendar_us.csv
+  events_whitelist:
+  - Non Farm Payrolls
+  - Unemployment Rate
+  - CPI
+  - Core CPI
+  - Core PCE
+  - ISM Manufacturing PMI
+  - ISM Services PMI
+  - FOMC Interest Rate Decision
+  - Fed Press Conference
 
 
+# -*- coding: utf-8 -*-
+import pandas as pd, numpy as np, yaml, json, os
+from pathlib import Path
 
+from features.fundamentals import build_fundamentals_features
+from features.calendar_features import make_event_features, load_calendar_csv
 
+cfg = yaml.safe_load(open('config.yaml','r',encoding='utf-8'))
+BARS = cfg['files']['bars_csv']; FEAT = cfg['files']['features_csv']
 
-$ErrorActionPreference="Stop"
-$REPO="C:\xau_rl"; $PY="$REPO\.venv\Scripts\python.exe"
-$LOG="$REPO\logs\services\fetch_features.log"; $LOCK="$REPO\logs\services\fetch_features.lock"
-New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null; Set-Location $REPO
-if(-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0){
-  "[$(Get-Date -Format o)] [fetch_features] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
-}
-function Acquire-Lock { if(Test-Path $LOCK){$false}else{New-Item -ItemType File -Path $LOCK -Force|Out-Null;$true} }
-function Release-Lock { if(Test-Path $LOCK){Remove-Item $LOCK -Force} }
-function Run-Once {
-  & $PY "fetch__mt5_data.py"         *>> $LOG
-  & $PY "features\build_features.py" *>> $LOG
-}
-while($true){
-  $ts=Get-Date -Format o
-  try{
-    if(Acquire-Lock){
-      "`n[$ts] [fetch_features] start" | Out-File -FilePath $LOG -Append -Encoding utf8
-      Run-Once
-      "`n[$(Get-Date -Format o)] [fetch_features] done" | Out-File -FilePath $LOG -Append -Encoding utf8
-      Release-Lock
-    } else {
-      "`n[$ts] [fetch_features] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
-    }
-  }catch{
-    "[ERROR] $($_|Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
-    Release-Lock
-  }
-  Start-Sleep -Seconds 600
-}
+def macd(series, fast=12, slow=26, signal=9):
+    ema_fast = series.ewm(span=fast, adjust=False).mean()
+    ema_slow = series.ewm(span=slow, adjust=False).mean()
+    macd_line = ema_fast - ema_slow
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    return macd_line, signal_line, macd_line - signal_line
+def bbands(series, period=20, n_std=2.0):
+    ma = series.rolling(period).mean()
+    sd = series.rolling(period).std()
+    upper = ma + n_std*sd; lower = ma - n_std*sd
+    width = (upper - lower) / (ma.replace(0,np.nan).abs() + 1e-12)
+    return ma, upper, lower, width
+
+def add_tech_features(df):
+    df = df.sort_values('time').reset_index(drop=True)
+    c = df['close']
+    df['ret1'] = np.log(c).diff()
+    df['ema10'] = c.ewm(span=10).mean(); df['ema50']=c.ewm(span=50).mean(); df['ema200']=c.ewm(span=200).mean()
+    d = c.diff(); up=d.clip(lower=0).ewm(alpha=1/14,adjust=False).mean(); down=(-d.clip(upper=0)).ewm(alpha=1/14,adjust=False).mean(); rs=up/(down+1e-12)
+    df['rsi14'] = 100 - (100/(1+rs))
+    h,l,cl = df['high'], df['low'], df['close']
+    tr = np.maximum(h-l, np.maximum((h-cl.shift()).abs(), (l-cl.shift()).abs()))
+    df['atr14'] = tr.ewm(alpha=1/14, adjust=False).mean()
+    m,s,hst = macd(c); df['macd']=m; df['macd_signal']=s; df['macd_hist']=hst
+    bb_ma, bb_up, bb_lo, bb_w = bbands(c); df['bb_ma']=bb_ma; df['bb_up']=bb_up; df['bb_lo']=bb_lo; df['bb_width']=bb_w
+    df['minute']=df['time'].dt.hour*60+df['time'].dt.minute
+    df['tod_sin']=np.sin(2*np.pi*df['minute']/1440); df['tod_cos']=np.cos(2*np.pi*df['minute']/1440); df.drop(columns=['minute'], inplace=True)
+    df['dow']=df['time'].dt.dayofweek
+    df['dow_sin']=np.sin(2*np.pi*df['dow']/7); df['dow_cos']=np.cos(2*np.pi*df['dow']/7); df.drop(columns=['dow'], inplace=True)
+    df['close_log']=np.log(c.clip(lower=1e-12))
+    mu = df['close_log'].rolling(2000, min_periods=200).mean()
+    sd = df['close_log'].rolling(2000, min_periods=200).std().replace(0,np.nan)
+    df['close_norm']=(df['close_log']-mu)/(sd+1e-8)
+    # normalizacja rolling wybranych featurów
+    feat_cols=['ret1','ema10','ema50','ema200','rsi14','atr14','macd','macd_signal','macd_hist','bb_ma','bb_up','bb_lo','bb_width','tod_sin','tod_cos','dow_sin','dow_cos']
+    for col in feat_cols:
+        mu = df[col].rolling(2000, min_periods=200).mean()
+        sd = df[col].rolling(2000, min_periods=200).std().replace(0,np.nan)
+        df[col]=(df[col]-mu)/(sd+1e-8)
+    return df
+
+def main():
+    bars = pd.read_csv(BARS, parse_dates=['time']).sort_values('time').reset_index(drop=True)
+    df = add_tech_features(bars)
+
+    # --- FUNDAMENTALS ---
+    fred_key = os.getenv("FRED_API_KEY", None)
+    gpr_csv = cfg.get('fundamentals',{}).get('gpr_csv', None)
+    cot_csv = cfg.get('fundamentals',{}).get('cot_csv', None)
+    usd_series_id = cfg.get('fundamentals',{}).get('usd_series_id', "DTWEXBGS")
+    fund = None
+    try:
+        fund = build_fundamentals_features(BARS, fred_key, gpr_csv=gpr_csv, cot_csv=cot_csv, usd_series_id=usd_series_id)
+    except Exception as e:
+        print(f"[warn] fundamentals skipped: {e}")
+
+    # --- CALENDAR ---
+    cal_csv = cfg.get('calendar',{}).get('calendar_csv', None)
+    cal_events = cfg.get('calendar',{}).get('events_whitelist', None)
+    cal_df = None
+    cal_feat = None
+    if cal_csv and Path(cal_csv).exists():
+        cal_df = load_calendar_csv(cal_csv)
+        cal_feat = make_event_features(BARS, cal_df, events_whitelist=cal_events, impact_threshold=2)
+
+    # MERGE
+    parts = [df]
+    if fund is not None:
+        parts.append(fund.drop(columns=['time']))
+    if cal_feat is not None:
+        parts.append(cal_feat.drop(columns=['time']))
+    full = pd.concat(parts, axis=1)
+
+    # dropna i zapis
+    full = full.dropna().reset_index(drop=True)
+    Path(FEAT).parent.mkdir(parents=True, exist_ok=True)
+    full.to_csv(FEAT, index=False)
+
+    # features_spec.json (jeśli istnieje – zachowaj; jeśli nie – wygeneruj z defaultu technicznego)
+    base_cols = ['time','open','high','low','close','tick_volume','spread']
+    feature_columns = [c for c in full.columns if c not in base_cols + ['close_log','close_norm']]
+    spec = {"feature_columns": feature_columns, "price_column":"close_norm"}
+    Path('models').mkdir(parents=True, exist_ok=True)
+    Path('models/features_spec.json').write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding='utf-8')
+    print("Saved features and features_spec.json (with fundamentals/calendar if available).")
+
+if __name__ == "__main__":
+    main()
