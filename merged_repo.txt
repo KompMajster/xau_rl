@@ -1,97 +1,70 @@
-cost-sugesstions
-spread_abs_median: 0.37
-spread_abs_p75: 0.42
-slippage_k_suggested: 0.0
+$ErrorActionPreference="Stop"
+$REPO="C:\xau_rl"; $PY="$REPO\.venv\Scripts\python.exe"
+$LOG="$REPO\logs\services\feature_discovery.log"; $LOCK="$REPO\logs\services\feature_discovery.lock"
+New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null; Set-Location $REPO
+if(-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0){
+  "[$(Get-Date -Format o)] [feature_discovery] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
+}
+function Acquire-Lock { if(Test-Path $LOCK){$false}else{New-Item -ItemType File -Path $LOCK -Force|Out-Null;$true} }
+function Release-Lock { if(Test-Path $LOCK){Remove-Item $LOCK -Force} }
+function Run-Once { & $PY "ops\feature_discovery_weekly.py" "--topK" "96" "--change_frac" "0.10" *>> $LOG }
+function Seconds-To-Next-21 {
+  $now = Get-Date
+  $target = [DateTime]::Today.AddHours(21)
+  if ($now -ge $target) { $target = $target.AddDays(1) }
+  $diff = $target - $now            # TimeSpan
+  return ([int]$diff.TotalSeconds)  # zwracamy liczbę sekund (int)
+}
+while($true){
+  Start-Sleep -Seconds (Seconds-To-Next-21)
+  $ts=Get-Date -Format o
+  try{
+    if(Acquire-Lock){
+      "`n[$ts] [feature_discovery] start" | Out-File -FilePath $LOG -Append -Encoding utf8
+      Run-Once
+      "`n[$(Get-Date -Format o)] [feature_discovery] done" | Out-File -FilePath $LOG -Append -Encoding utf8
+      Release-Lock
+    } else {
+      "`n[$ts] [feature_discovery] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
+    }
+  } catch {
+    "[ERROR] $($_|Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
+    Release-Lock
+  }
+  Start-Sleep -Seconds (23*3600)
+}
 
 
-feature,abs_spearman,prev_used
-ret1,0.029109373099869124,False
-atr14,0.024141754871350906,False
-atr14_lag2,0.022330971189332336,False
-atr14_lag1,0.022077728045851598,False
-atr14_lag3,0.02197476026531411,False
-rsi14,0.019548964128895136,False
-ema50_lag3,0.017608069903784912,False
-ema50_lag2,0.017444525795024774,False
-bb_ma_lag3,0.01728606085069922,False
-bb_up_lag3,0.017274418971751103,False
-ema50_lag1,0.01711331470686239,False
-bb_ma_lag2,0.017019345189961683,False
-bb_up_lag2,0.016776551037278615,False
-ema50,0.01677208459580483,False
-bb_lo_lag1,0.016630820706066033,False
-fred_DTWEXBGS_lag1,0.016622225516494872,False
-fred_DTWEXBGS,0.016590356408666563,False
-bb_lo_lag2,0.0165729866928208,False
-bb_ma_lag1,0.01654905875866741,False
-ema200_lag3,0.016546436884591707,False
-bb_lo_lag3,0.016536445886617967,False
-ema200_lag2,0.01651494301404641,False
-bb_lo,0.016500287432210065,False
-ema200_lag1,0.01641431210026451,False
-ema10_lag3,0.016364071246548102,False
-ema200,0.01629666857579916,False
-bb_ma,0.016148101217135908,False
-bb_up_lag1,0.0161229958454972,False
-bb_width,0.016113469464279183,False
-ema10_lag2,0.016084590407046885,False
-bb_up,0.01595250661809444,False
-fred_DTWEXBGS_lag2,0.015915162595922655,False
-fred_DTWEXBGS_lag3,0.01586942489986296,False
-ema10_lag1,0.015592372747479651,False
-close_norm_lag3,0.015460821110083293,False
-ema10,0.015090885206062157,False
-close_norm_lag2,0.015083994646282,False
-close_norm_lag1,0.014927426311943135,False
-bb_width_lag3,0.01486642476609115,False
-ret1_lag3,0.014791827361020509,False
-bb_width_lag2,0.014029888603022822,False
-bb_width_lag1,0.013805473765196306,False
-close_norm,0.013348022461087485,False
-macd_hist,0.013141111580304043,False
-rsi14_lag2,0.01269457609711897,False
-rsi14_lag3,0.012098910863177107,False
-rsi14_lag1,0.010994379997967119,False
-ret1_lag2,0.010290770872170745,False
-macd_hist_lag2,0.010242999206207856,False
-macd_hist_lag3,0.009468868587120951,False
-dow_cos_lag3,0.008794761931930033,False
-macd,0.008720740961575548,False
-dow_cos,0.008432367567904624,False
-macd_hist_lag1,0.007719797886832265,False
-dow_cos_lag2,0.007619338559771749,False
-dow_cos_lag1,0.007525915944457063,False
-macd_lag1,0.006455015770175368,False
-tod_sin,0.005702234771625759,False
-tod_sin_lag1,0.005492842582754086,False
-tod_sin_lag2,0.005356486806147349,False
-macd_lag2,0.005320516510434571,False
-tod_sin_lag3,0.005304179659652721,False
-close_log,0.004624149516475195,False
-macd_lag3,0.0039077824354948896,False
-close_log_lag1,0.0038215669226884627,False
-close_log_lag2,0.003818856052717612,False
-close_log_lag3,0.0038183338126594555,False
-macd_signal,0.0034002930827394776,False
-dow_sin_lag3,0.0026059415326605316,False
-dow_sin_lag2,0.0023445563014297,False
-macd_signal_lag1,0.0019610680462427963,False
-dow_sin,0.0018714494772530624,False
-dow_sin_lag1,0.001794051183778088,False
-ret1_lag1,0.0015923829311368792,False
-tod_cos_lag3,0.0008490763094111533,False
-tod_cos_lag1,0.0008170214284432035,False
-tod_cos,0.0007560770079304148,False
-tod_cos_lag2,0.0007533583238930145,False
-macd_signal_lag2,0.0006875132536095709,False
-macd_signal_lag3,0.0005154758260522013,False
 
 
-# Feature Discovery Summary
-Generated at: 2025-11-06T11:25:49
-TopK: 96
-Prev size: 0, Cur size: 80
-Jaccard(prev,cur): 0.000  (1.0 = identyczne, 0.0 = zupełnie różne)
-Kept from prev: 0
-New vs prev:   80
-Min new ratio enforced: 0.20
+
+$ErrorActionPreference="Stop"
+$REPO="C:\xau_rl"; $PY="$REPO\.venv\Scripts\python.exe"
+$LOG="$REPO\logs\services\fetch_features.log"; $LOCK="$REPO\logs\services\fetch_features.lock"
+New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null; Set-Location $REPO
+if(-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0){
+  "[$(Get-Date -Format o)] [fetch_features] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
+}
+function Acquire-Lock { if(Test-Path $LOCK){$false}else{New-Item -ItemType File -Path $LOCK -Force|Out-Null;$true} }
+function Release-Lock { if(Test-Path $LOCK){Remove-Item $LOCK -Force} }
+function Run-Once {
+  & $PY "fetch__mt5_data.py"         *>> $LOG
+  & $PY "features\build_features.py" *>> $LOG
+}
+while($true){
+  $ts=Get-Date -Format o
+  try{
+    if(Acquire-Lock){
+      "`n[$ts] [fetch_features] start" | Out-File -FilePath $LOG -Append -Encoding utf8
+      Run-Once
+      "`n[$(Get-Date -Format o)] [fetch_features] done" | Out-File -FilePath $LOG -Append -Encoding utf8
+      Release-Lock
+    } else {
+      "`n[$ts] [fetch_features] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
+    }
+  }catch{
+    "[ERROR] $($_|Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
+    Release-Lock
+  }
+  Start-Sleep -Seconds 600
+}
