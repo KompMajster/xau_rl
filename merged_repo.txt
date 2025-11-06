@@ -1,4 +1,255 @@
 (.venv) PS C:\xau_rl> python -m features.build_features
-C:\xau_rl\features\build_features.py:48: FutureWarning: 'T' is deprecated and will be removed in a future version, please use 'min' instead.
-  t['time_rounded'] = t['time'].dt.floor('T')
 Saved features -> data/XAUUSD_M5_features.csv (rows=263, cols=79)
+(.venv) PS C:\xau_rl> python -m ops.feature_discovery_weekly --topK 96 --max_lag 3 --change_frac 0.10 --out models\features_spec.json
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\ops\feature_discovery_weekly.py:134: PerformanceWarning: DataFrame is highly fragmented.  This is usually the result of calling `frame.insert` many times, which has poor performance.  Consider joining all columns at once using pd.concat(axis=1) instead. To get a de-fragmented frame, use `newframe = frame.copy()`
+  d[f"{c}_lag{L}"] = d[c].shift(L)
+C:\xau_rl\.venv\Lib\site-packages\pandas\core\nanops.py:1632: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+  return spearmanr(a, b)[0]
+C:\xau_rl\.venv\Lib\site-packages\pandas\core\nanops.py:1632: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+  return spearmanr(a, b)[0]
+C:\xau_rl\.venv\Lib\site-packages\pandas\core\nanops.py:1632: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+  return spearmanr(a, b)[0]
+C:\xau_rl\.venv\Lib\site-packages\pandas\core\nanops.py:1632: ConstantInputWarning: An input array is constant; the correlation coefficient is not defined.
+  return spearmanr(a, b)[0]
+Feature discovery completed.
+(.venv) PS C:\xau_rl>
