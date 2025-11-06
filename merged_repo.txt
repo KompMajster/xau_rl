@@ -1,3 +1,11 @@
-
-cd C:\xau_rl
-.\.venv\Scripts\python.exe ops\feature_discovery_weekly.py --topK 96 --max_lag 3 --out models\features_spec.json
+(.venv) PS C:\xau_rl> python -m ops.feature_discovery_weekly --topK 96 --max_lag 3 --out models\features_spec.json
+Traceback (most recent call last):
+  File "<frozen runpy>", line 189, in _run_module_as_main
+  File "<frozen runpy>", line 159, in _get_module_details
+  File "<frozen importlib._bootstrap_external>", line 1160, in get_code
+  File "<frozen importlib._bootstrap_external>", line 1090, in source_to_code
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "C:\xau_rl\ops\feature_discovery_weekly.py", line 31
+    ``
+    ^
+SyntaxError: invalid syntax
