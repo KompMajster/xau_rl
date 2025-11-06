@@ -1,141 +1,351 @@
-symbol: GOLD.pro
-timeframe: M5
-history_days: 720
-window: 128
-mt5:
-  bars_chunk: 100000
-  update_days: 60
-files:
-  bars_csv: data/XAUUSD_M5.csv
-  ticks_csv: data/XAUUSD_ticks_sample.csv
-  features_csv: data/XAUUSD_M5_features.csv
-  model_path: models/ppo_xauusd_m5.zip
-  vecnorm_path: models/vecnorm_xauusd_m5.pkl
-costs:
-  spread_abs: 0.37
-  commission_rate: 0.0001
-  slippage_k: 0.0
-env:
-  reward_mode: pct
-  flip_penalty: 0.002
-  trade_hours_utc:
-  - 06:00
-  - '20:00'
-  enforce_flat_outside_hours: true
-  min_equity: 0.8
-fundamentals:
-  usd_series_id: DTWEXBGS
-  gpr_csv: external/gpr/gpr.csv
-  cot_csv: external/cot_gold.csv
-calendar:
-  calendar_csv: external/calendar_us.csv
-  events_whitelist:
-  - Non Farm Payrolls
-  - Unemployment Rate
-  - CPI
-  - Core CPI
-  - Core PCE
-  - ISM Manufacturing PMI
-  - ISM Services PMI
-  - FOMC Interest Rate Decision
-  - Fed Press Conference
-
-
+# ops/feature_discovery_weekly.py
 # -*- coding: utf-8 -*-
-import pandas as pd, numpy as np, yaml, json, os
+"""
+Feature Discovery (dziennie) dla XAUUSD M5:
+ - Czyta cechy z config.yaml -> files.features_csv,
+ - (Opcjonalnie) dołącza fundamenty i kalendarz (FRED/GPR/COT/Event),
+ - Tworzy lagi (--max_lag),
+ - Rankuje cechy po |Spearman| do targetu 1-krok do przodu,
+ - Dywersyfikacja: kara za częste użycie + min. udział nowych (--change_frac),
+ - Zapisuje:
+     * models/features_spec.json
+     * models/features_spec_history.jsonl (append)
+     * reports/feature_discovery_rank.csv
+     * reports/feature_discovery_summary.txt
+     * logs/feature_discovery.log
+Uruchamiaj jako skrypt, nie jako moduł.
+"""
+
+import argparse, os, json, traceback
 from pathlib import Path
+import pandas as pd
+import numpy as np
+import yaml
+from datetime import datetime
 
-from features.fundamentals import build_fundamentals_features
-from features.calendar_features import make_event_features, load_calendar_csv
+# -----------------------------------------------------------
+# USTAWIENIA I ŚCIEŻKI
+# -----------------------------------------------------------
+ROOT = Path(__file__).resolve().parents[1]
+os.chdir(ROOT)
 
-cfg = yaml.safe_load(open('config.yaml','r',encoding='utf-8'))
-BARS = cfg['files']['bars_csv']; FEAT = cfg['files']['features_csv']
+LOG_DIR = ROOT / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG = LOG_DIR / "feature_discovery.log"
 
-def macd(series, fast=12, slow=26, signal=9):
-    ema_fast = series.ewm(span=fast, adjust=False).mean()
-    ema_slow = series.ewm(span=slow, adjust=False).mean()
-    macd_line = ema_fast - ema_slow
-    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-    return macd_line, signal_line, macd_line - signal_line
-def bbands(series, period=20, n_std=2.0):
-    ma = series.rolling(period).mean()
-    sd = series.rolling(period).std()
-    upper = ma + n_std*sd; lower = ma - n_std*sd
-    width = (upper - lower) / (ma.replace(0,np.nan).abs() + 1e-12)
-    return ma, upper, lower, width
+HIST_PATH = ROOT / "models" / "features_spec_history.jsonl"
+SUMMARY_PATH = ROOT / "reports" / "feature_discovery_summary.txt"
+RANK_PATH = ROOT / "reports" / "feature_discovery_rank.csv"
 
-def add_tech_features(df):
-    df = df.sort_values('time').reset_index(drop=True)
-    c = df['close']
-    df['ret1'] = np.log(c).diff()
-    df['ema10'] = c.ewm(span=10).mean(); df['ema50']=c.ewm(span=50).mean(); df['ema200']=c.ewm(span=200).mean()
-    d = c.diff(); up=d.clip(lower=0).ewm(alpha=1/14,adjust=False).mean(); down=(-d.clip(upper=0)).ewm(alpha=1/14,adjust=False).mean(); rs=up/(down+1e-12)
-    df['rsi14'] = 100 - (100/(1+rs))
-    h,l,cl = df['high'], df['low'], df['close']
-    tr = np.maximum(h-l, np.maximum((h-cl.shift()).abs(), (l-cl.shift()).abs()))
-    df['atr14'] = tr.ewm(alpha=1/14, adjust=False).mean()
-    m,s,hst = macd(c); df['macd']=m; df['macd_signal']=s; df['macd_hist']=hst
-    bb_ma, bb_up, bb_lo, bb_w = bbands(c); df['bb_ma']=bb_ma; df['bb_up']=bb_up; df['bb_lo']=bb_lo; df['bb_width']=bb_w
-    df['minute']=df['time'].dt.hour*60+df['time'].dt.minute
-    df['tod_sin']=np.sin(2*np.pi*df['minute']/1440); df['tod_cos']=np.cos(2*np.pi*df['minute']/1440); df.drop(columns=['minute'], inplace=True)
-    df['dow']=df['time'].dt.dayofweek
-    df['dow_sin']=np.sin(2*np.pi*df['dow']/7); df['dow_cos']=np.cos(2*np.pi*df['dow']/7); df.drop(columns=['dow'], inplace=True)
-    df['close_log']=np.log(c.clip(lower=1e-12))
-    mu = df['close_log'].rolling(2000, min_periods=200).mean()
-    sd = df['close_log'].rolling(2000, min_periods=200).std().replace(0,np.nan)
-    df['close_norm']=(df['close_log']-mu)/(sd+1e-8)
-    # normalizacja rolling wybranych featurów
-    feat_cols=['ret1','ema10','ema50','ema200','rsi14','atr14','macd','macd_signal','macd_hist','bb_ma','bb_up','bb_lo','bb_width','tod_sin','tod_cos','dow_sin','dow_cos']
-    for col in feat_cols:
-        mu = df[col].rolling(2000, min_periods=200).mean()
-        sd = df[col].rolling(2000, min_periods=200).std().replace(0,np.nan)
-        df[col]=(df[col]-mu)/(sd+1e-8)
-    return df
+# Dywersyfikacja (domyślne; można nadpisać --change_frac)
+MIN_NEW_RATIO   = 0.20     # minimalny udział nowych cech (0..1)
+HIST_WINDOW     = 6        # okno historii wyborów (ostatnie N dni)
+REPEAT_PENALTY  = 0.90     # score *= 0.90^freq w oknie historii
 
-def main():
-    bars = pd.read_csv(BARS, parse_dates=['time']).sort_values('time').reset_index(drop=True)
-    df = add_tech_features(bars)
+# TWARDY KLUCZ FRED (na Twoim prywatnym hoście OK)
+FRED_API_KEY_HARDCODED = "404d32dffe691fd6159eed5cceb44e80"
 
-    # --- FUNDAMENTALS ---
-    fred_key = os.getenv("FRED_API_KEY", None)
-    gpr_csv = cfg.get('fundamentals',{}).get('gpr_csv', None)
-    cot_csv = cfg.get('fundamentals',{}).get('cot_csv', None)
-    usd_series_id = cfg.get('fundamentals',{}).get('usd_series_id', "DTWEXBGS")
-    fund = None
+# -----------------------------------------------------------
+# POMOCNICZE
+# -----------------------------------------------------------
+def log(msg: str):
+    ts = datetime.now().isoformat(timespec="seconds")
+    with open(LOG, "a", encoding="utf-8") as f:
+        f.write(f"[{ts}] {msg}\n")
+
+def load_cfg():
+    with open(ROOT / "config.yaml", "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+def read_features_csv(cfg):
+    p = Path(cfg["files"]["features_csv"])
+    if not p.exists():
+        raise FileNotFoundError(f"features_csv not found: {p.as_posix()}")
+    df = pd.read_csv(p, parse_dates=["time"])
+    return df.sort_values("time").reset_index(drop=True)
+
+def safe_merge_on_time(df_base: pd.DataFrame, df_right: pd.DataFrame, col_map: dict):
+    """Resample prawej tabeli do 1min + ffill i merge_asof backward (tolerancja 10min)."""
+    if df_right is None or df_right.empty:
+        return df_base
+    r = df_right.copy()
+    if "time" not in r.columns:
+        raise ValueError("Right dataframe has no 'time'")
+    r = (r.sort_values("time").drop_duplicates("time")
+           .set_index("time").asfreq("1min").ffill()
+           .reset_index().rename(columns=col_map))
+    out = pd.merge_asof(
+        df_base.sort_values("time"),
+        r.sort_values("time"),
+        on="time",
+        direction="backward",
+        tolerance=pd.Timedelta(minutes=10)
+    )
+    return out
+
+def try_load_fred(series_id: str):
+    """Najpierw fredapi z wpisanym kluczem; jeśli nie zadziała -> CSV fallback: external/fred/{series}.csv (kolumny: date,value)."""
+    if not series_id:
+        return None
     try:
-        fund = build_fundamentals_features(BARS, fred_key, gpr_csv=gpr_csv, cot_csv=cot_csv, usd_series_id=usd_series_id)
+        from fredapi import Fred
+        fred = Fred(api_key=FRED_API_KEY_HARDCODED)
+        s = fred.get_series(series_id)
+        df = s.to_frame(name=series_id).reset_index()
+        df = df.rename(columns={"index": "time"})
+        df["time"] = pd.to_datetime(df["time"], utc=True)
+        return df
     except Exception as e:
-        print(f"[warn] fundamentals skipped: {e}")
+        log(f"[warn] FRED api unavailable ({e}); trying CSV fallback")
 
-    # --- CALENDAR ---
-    cal_csv = cfg.get('calendar',{}).get('calendar_csv', None)
-    cal_events = cfg.get('calendar',{}).get('events_whitelist', None)
-    cal_df = None
-    cal_feat = None
-    if cal_csv and Path(cal_csv).exists():
-        cal_df = load_calendar_csv(cal_csv)
-        cal_feat = make_event_features(BARS, cal_df, events_whitelist=cal_events, impact_threshold=2)
+    csv_p = ROOT / "external" / "fred" / f"{series_id}.csv"
+    if csv_p.exists():
+        df = pd.read_csv(csv_p)
+        col_time = "time" if "time" in df.columns else ("date" if "date" in df.columns else None)
+        if not col_time or "value" not in df.columns:
+            raise RuntimeError(f"FRED CSV malformed: {csv_p.as_posix()}")
+        df[col_time] = pd.to_datetime(df[col_time], utc=True)
+        df = df.rename(columns={col_time: "time", "value": series_id})
+        return df
+    return None
 
-    # MERGE
-    parts = [df]
-    if fund is not None:
-        parts.append(fund.drop(columns=['time']))
-    if cal_feat is not None:
-        parts.append(cal_feat.drop(columns=['time']))
-    full = pd.concat(parts, axis=1)
+def try_load_simple_csv(p: Path, time_col="time"):
+    if not p or not Path(p).exists():
+        return None
+    df = pd.read_csv(p)
+    if time_col not in df.columns:
+        for c in ["date", "Date"]:
+            if c in df.columns:
+                time_col = c
+                break
+    if time_col not in df.columns:
+        return None
+    df[time_col] = pd.to_datetime(df[time_col], utc=True)
+    return df.rename(columns={time_col: "time"})
 
-    # dropna i zapis
-    full = full.dropna().reset_index(drop=True)
-    Path(FEAT).parent.mkdir(parents=True, exist_ok=True)
-    full.to_csv(FEAT, index=False)
+def build_target(df: pd.DataFrame, price_col="close", horizon=1):
+    """Target: 1-krok do przodu na proc. zmianie ceny (return)."""
+    return df[price_col].pct_change().shift(-horizon).rename("target_fwd1")
 
-    # features_spec.json (jeśli istnieje – zachowaj; jeśli nie – wygeneruj z defaultu technicznego)
-    base_cols = ['time','open','high','low','close','tick_volume','spread']
-    feature_columns = [c for c in full.columns if c not in base_cols + ['close_log','close_norm']]
-    spec = {"feature_columns": feature_columns, "price_column":"close_norm"}
-    Path('models').mkdir(parents=True, exist_ok=True)
-    Path('models/features_spec.json').write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding='utf-8')
-    print("Saved features and features_spec.json (with fundamentals/calendar if available).")
+def add_lags(df: pd.DataFrame, cols: list, max_lag: int):
+    d = df.copy()
+    for c in cols:
+        for L in range(1, max_lag + 1):
+            d[f"{c}_lag{L}"] = d[c].shift(L)
+    return d
 
+def score_features(df: pd.DataFrame, feature_cols: list, target_col="target_fwd1"):
+    """Ranking po |Spearman| korelacji do targetu. Filtr: >=200 nienull obserwacji."""
+    scores = []
+    y = df[target_col].astype(float)
+    for c in feature_cols:
+        try:
+            x = df[c].astype(float)
+            ok = x.notna() & y.notna()
+            if ok.sum() < 200:
+                continue
+            rho = x[ok].corr(y[ok], method="spearman")
+            scores.append((c, float(abs(rho))))
+        except Exception:
+            continue
+    scores.sort(key=lambda t: t[1], reverse=True)
+    return pd.DataFrame(scores, columns=["feature", "abs_spearman"])
+
+def load_history(max_lines=HIST_WINDOW):
+    if not HIST_PATH.exists():
+        return []
+    rows = []
+    with open(HIST_PATH, "r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                rows.append(json.loads(line))
+            except:
+                pass
+    return rows[-max_lines:] if rows else []
+
+def save_history(entry: dict):
+    HIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(HIST_PATH, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+def jaccard(a: set, b: set) -> float:
+    if not a and not b:
+        return 1.0
+    return len(a & b) / max(1, len(a | b))
+
+def apply_repeat_penalty(rank_df: pd.DataFrame, hist_rows: list):
+    """Obniża score cech, które często pojawiały się w historii: score *= REPEAT_PENALTY ** freq."""
+    if not hist_rows or rank_df.empty:
+        return rank_df.copy()
+    freq = {}
+    for r in hist_rows:
+        feats = r.get("feature_columns", [])
+        for c in feats:
+            freq[c] = freq.get(c, 0) + 1
+    out = rank_df.copy()
+    out["repeat_freq"] = out["feature"].map(lambda c: freq.get(c, 0))
+    out["score_after_penalty"] = out["abs_spearman"] * (REPEAT_PENALTY ** out["repeat_freq"])
+    out = out.sort_values("score_after_penalty", ascending=False).reset_index(drop=True)
+    return out
+
+def diversify_select(adjusted_rank: pd.DataFrame, prev_features: list, topK: int, min_new_ratio=MIN_NEW_RATIO):
+    """Wybór topK tak, by >= min_new_ratio było nowych vs poprzedni wybór."""
+    prev_set = set(prev_features or [])
+    new_needed = int(np.ceil(topK * min_new_ratio))
+    chosen = []
+
+    # Najpierw zbierz "nowe" cechy z góry rankingu
+    for _, row in adjusted_rank.iterrows():
+        f = row["feature"]
+        if f not in prev_set and f not in chosen:
+            chosen.append(f)
+            if len([c for c in chosen if c not in prev_set]) >= new_needed:
+                break
+
+    # Dopełnij najlepszymi (mogą być już znane)
+    if len(chosen) < topK:
+        for _, row in adjusted_rank.iterrows():
+            f = row["feature"]
+            if f not in chosen:
+                chosen.append(f)
+                if len(chosen) >= topK:
+                    break
+
+    return chosen[:topK]
+
+# -----------------------------------------------------------
+# GŁÓWNA LOGIKA
+# -----------------------------------------------------------
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--topK", type=int, default=96)
+    ap.add_argument("--max_lag", type=int, default=3)
+    ap.add_argument("--out", type=str, default="models/features_spec.json")
+    ap.add_argument("--change_frac", type=float, default=None,
+                    help="Minimalny udział nowych cech [0..1] względem poprzedniego wyboru")
+    args = ap.parse_args()
+
+    # Ewentualne nadpisanie progu nowych cech
+    global MIN_NEW_RATIO
+    if args.change_frac is not None:
+        MIN_NEW_RATIO = float(np.clip(args.change_frac, 0.0, 1.0))
+
+    log("feature_discovery bootstrap_alive")
+    cfg = load_cfg()
+    log("start")
+
+    # 1) Wczytaj cechy techniczne (z generatora features)
+    df = read_features_csv(cfg)
+
+    # 2) Zbuduj target
+    #    price_column: preferuj close_norm jeśli dostępny, w innym razie close
+    price_col = "close_norm" if "close_norm" in df.columns else "close"
+    df["target_fwd1"] = build_target(df, price_col=price_col)
+
+    # 3) Dołącz fundamenty i kalendarz (opcjonalnie; bez crasha)
+    try:
+        fcfg = (cfg.get("fundamentals") or {})
+        usd_id = fcfg.get("usd_series_id", None)   # np. DTWEXBGS
+        fred_df = try_load_fred(usd_id) if usd_id else None
+        if fred_df is not None:
+            df = safe_merge_on_time(df, fred_df, {usd_id: f"fred_{usd_id}"})
+            # prosta standaryzacja w długim oknie
+            col = f"fred_{usd_id}"
+            mu = df[col].rolling(5000, min_periods=100).mean()
+            sd = df[col].rolling(5000, min_periods=100).std().replace(0, np.nan)
+            df[col] = (df[col] - mu) / (sd + 1e-8)
+        else:
+            log("[info] FRED series not attached (no api/csv)")
+
+        gpr_p = fcfg.get("gpr_csv", None)
+        cot_p = fcfg.get("cot_csv", None)
+        cal_cfg = (cfg.get("calendar") or {})
+        cal_p = cal_cfg.get("calendar_csv", None)
+
+        gpr = try_load_simple_csv(ROOT / gpr_p) if gpr_p else None
+        if gpr is not None:
+            vcols = [c for c in gpr.columns if c != "time"]
+            if vcols:
+                gpr = gpr[["time", vcols[0]]].rename(columns={vcols[0]: "gpr"})
+                df = safe_merge_on_time(df, gpr, {"gpr": "gpr"})
+
+        cot = try_load_simple_csv(ROOT / cot_p) if cot_p else None
+        if cot is not None:
+            vcols = [c for c in cot.columns if c != "time"]
+            if vcols:
+                cot = cot[["time", vcols[0]]].rename(columns={vcols[0]: "cot"})
+                df = safe_merge_on_time(df, cot, {"cot": "cot"})
+
+        cal = try_load_simple_csv(ROOT / cal_p) if cal_p else None
+        if cal is not None:
+            cal["event_flag"] = 1
+            df = safe_merge_on_time(df, cal[["time", "event_flag"]], {"event_flag": "us_event"})
+    except Exception as e:
+        log(f"[warn] fundamentals/calendar attach failed: {e}")
+
+    # 4) Przygotuj kandydatów + lags
+    base_cols = ["time","open","high","low","close","tick_volume","spread"]
+    all_cols = [c for c in df.columns if c not in base_cols + ["target_fwd1"]]
+    df = add_lags(df, all_cols, max_lag=args.max_lag)
+
+    cand_cols = [c for c in df.columns if c not in base_cols + ["target_fwd1"]]
+    rank = score_features(df, cand_cols, target_col="target_fwd1")
+    if rank.empty:
+        raise RuntimeError("Ranking pusty – brak danych do selekcji.")
+
+    # 5) Historia i kara za powtarzanie
+    hist_rows = load_history(HIST_WINDOW)
+    prev_feats = hist_rows[-1]["feature_columns"] if hist_rows else []
+    rank_adj = apply_repeat_penalty(rank, hist_rows)
+
+    # Zapis rankingu (z kolumnami pomocniczymi)
+    out_rank = rank_adj.assign(prev_used=lambda x: x["feature"].isin(prev_feats))
+    RANK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    out_rank.to_csv(RANK_PATH, index=False)
+
+    # 6) Wybór z minimalnym udziałem nowych cech
+    topK = max(int(args.topK), 8)
+    chosen = diversify_select(rank_adj, prev_feats, topK, MIN_NEW_RATIO)
+
+    # 7) Zapis spec + historia
+    spec = {
+        "feature_columns": chosen,
+        "price_column": "close_norm" if "close_norm" in df.columns else "close",
+        "generated_at": datetime.now().isoformat(timespec="seconds")
+    }
+    out_p = ROOT / args.out
+    out_p.parent.mkdir(parents=True, exist_ok=True)
+    out_p.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    save_history({
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "feature_columns": chosen
+    })
+
+    # 8) Raport (Jaccard, ile nowych itd.)
+    prev_set = set(prev_feats or [])
+    cur_set = set(chosen or [])
+    jac = jaccard(prev_set, cur_set)
+    chg = len(cur_set - prev_set)
+    kept = len(cur_set & prev_set)
+    SUMMARY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(SUMMARY_PATH, "w", encoding="utf-8") as f:
+        f.write("# Feature Discovery Summary\n")
+        f.write(f"Generated at: {datetime.now().isoformat(timespec='seconds')}\n")
+        f.write(f"TopK: {topK}\n")
+        f.write(f"Prev size: {len(prev_set)}, Cur size: {len(cur_set)}\n")
+        f.write(f"Jaccard(prev,cur): {jac:.3f}  (1.0 = identyczne, 0.0 = zupełnie różne)\n")
+        f.write(f"Kept from prev: {kept}\n")
+        f.write(f"New vs prev:   {chg}\n")
+        f.write(f"Min new ratio enforced: {MIN_NEW_RATIO:.2f}\n")
+
+    log(f"saved spec -> {out_p.as_posix()}, rank -> {RANK_PATH.as_posix()}, summary -> {SUMMARY_PATH.as_posix()}")
+    print("Feature discovery completed.")
+
+# -----------------------------------------------------------
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        log(f"[ERROR] {e}")
+        log(traceback.format_exc())
