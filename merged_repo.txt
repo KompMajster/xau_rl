@@ -1,12 +1,94 @@
-At C:\xau_rl\ops\daemon_mini_update.ps1:53 char:73
-+ ...  $PY -u "ops\mini_update_ppo.py" "--timesteps" "300000" >> $LOG 2>>&1
-+                                                                        ~
-Missing file specification after redirection operator.
-At C:\xau_rl\ops\daemon_mini_update.ps1:53 char:73
-+ ...  $PY -u "ops\mini_update_ppo.py" "--timesteps" "300000" >> $LOG 2>>&1
-+                                                                        ~
-The ampersand (&) character is not allowed. The & operator is reserved for future use; wrap an ampe
-rsand in double quotation marks ("&") to pass it as part of a string.
-    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
-    + FullyQualifiedErrorId : MissingFileSpecification
- 
+# encoding: utf-8
+$ErrorActionPreference = "Stop"
+
+# ==== KONFIG ====
+$REPO   = "C:\xau_rl"
+$PY     = Join-Path $REPO ".venv\Scripts\python.exe"
+$LogDir = Join-Path $REPO "logs\services"
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+
+# Unikalny log per uruchomienie (łatwiejsze debugowanie)
+$STAMP = Get-Date -Format "yyyyMMdd_HHmmss"
+$LOG   = Join-Path $LogDir "mini_update_ppo_$STAMP.log"
+$LOCK  = Join-Path $LogDir "mini_update_ppo.lock"
+
+# Nagłówek do logu (bez Start-Transcript, żeby nie trzymać uchwytu)
+"[daemon] ===== mini_update start ====="                  | Add-Content -Path $LOG -Encoding UTF8
+"[daemon] TS    : $(Get-Date -Format o)"                  | Add-Content -Path $LOG -Encoding UTF8
+"[daemon] PSVer : $($PSVersionTable.PSVersion)"           | Add-Content -Path $LOG -Encoding UTF8
+"[daemon] REPO  : $REPO"                                  | Add-Content -Path $LOG -Encoding UTF8
+"[daemon] PY    : $PY (exists? $(bool))" | Add-Content -Path $LOG -Encoding UTF8
+"[daemon] PATH  : $env:PATH"                              | Add-Content -Path $LOG -Encoding UTF8
+"" | Add-Content -Path $LOG -Encoding UTF8
+
+# Katalog roboczy repo (BARDZO ważne dla ścieżek względnych)
+Set-Location $REPO
+
+# Zapas: jeżeli brak .venv/python.exe, spróbuj 'python' z PATH
+if (-not (Test-Path -LiteralPath $PY)) { $PY = "python" }
+
+# ---- LOCK na uchwycie (żeby nie startować równolegle) ----
+$script:LockHandle = $null
+function Acquire-Lock {
+    try {
+        $script:LockHandle = [System.IO.File]::Open(
+            $LOCK,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+        return $true
+    } catch {
+        return $false
+    }
+}
+function Release-Lock {
+    try {
+        if ($script:LockHandle) {
+            $script:LockHandle.Close()
+            $script:LockHandle.Dispose()
+            $script:LockHandle = $null
+        }
+    } catch {}
+    try { Remove-Item $LOCK -Force -ErrorAction SilentlyContinue } catch {}
+}
+
+# Jednorazowe uruchomienie mini_update
+function Run-Once {
+    $ts = Get-Date -Format o
+    "[daemon] [$ts] [mini_update] start" | Add-Content -Path $LOG -Encoding UTF8
+
+    # STDOUT i STDERR -> ten sam plik logu (UWAGA: prawdziwe '>' i '&')
+    & $PY -u "ops\mini_update_ppo.py" "--timesteps" "300000" >> $LOG 2>>&1
+
+    $code = $LASTEXITCODE
+    "[daemon] [$ts] [mini_update] exit_code=$code" | Add-Content -Path $LOG -Encoding UTF8
+    if ($code -ne 0) { throw "mini_update failed with exit_code=$code (see $LOG)" }
+
+    "[daemon] [$ts] [mini_update] done" | Add-Content -Path $LOG -Encoding UTF8
+}
+
+# Globalny trap – zawsze oddaj lock i nie dopuszczaj do „karuzeli”
+trap {
+    $msg = "[daemon][ERROR] $($_.Exception.Message)`n$($_ | Out-String)"
+    $msg | Add-Content -Path $LOG -Encoding UTF8
+    Release-Lock
+    Start-Sleep -Seconds 10
+    continue
+}
+
+# Pętla co 6 godzin
+while ($true) {
+    try {
+        if (Acquire-Lock) {
+            try { Run-Once } finally { Release-Lock }
+        } else {
+            "[daemon] [$(Get-Date -Format o)] [mini_update] skipped (locked)" | Add-Content -Path $LOG -Encoding UTF8
+        }
+    } catch {
+        "[daemon][ERROR] $($_.Exception.Message)`n$($_ | Out-String)" | Add-Content -Path $LOG -Encoding UTF8
+        Release-Lock
+        Start-Sleep -Seconds 10
+    }
+    Start-Sleep -Seconds (6*3600)
+}
