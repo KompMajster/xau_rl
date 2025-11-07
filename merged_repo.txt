@@ -1,38 +1,587 @@
-[2025-11-07T17:03:42.9170353+01:00] [mini_update] start
-[ m i n i _ u p d a t e ]   f e a t u r e s _ c s v = d a t a / X A U U S D _ M 5 _ f e a t u r e s . c s v 
- 
- [ m i n i _ u p d a t e ]   d f   r o w s = 2 6 4     f r o m = 2 0 2 5 - 1 1 - 0 6   1 5 : 5 5 : 0 0     t o = 2 0 2 5 - 1 1 - 0 7   1 4 : 5 5 : 0 0 
- 
- [ m i n i _ u p d a t e ]   r a n g e s :   t r a i n _ s t a r t = 2 0 2 5 - 0 6 - 1 0   1 4 : 5 5 : 0 0     v a l _ s t a r t = 2 0 2 5 - 1 0 - 0 8   1 4 : 5 5 : 0 0     v a l _ e n d = 2 0 2 5 - 1 1 - 0 7   1 4 : 5 5 : 0 0 
- 
- [ m i n i _ u p d a t e ]   c o u n t s :   t r a i n = 0     v a l = 2 6 4     ( W I N D O W = 1 2 8 ) 
- 
- [ m i n i _ u p d a t e ] [ f a l l b a c k - t i g h t ]   t r a i n = 1 3 1 ,   v a l = 1 3 3 
- 
- [ m i n i _ u p d a t e ]   T r a i n i n g   o n   1 3 1   r o w s   ( ~ 1 2 0 d ) ,   t i m e s t e p s = 3 0 0 0 0 0 
- 
- [ m i n i _ u p d a t e ]   f e a t u r e s _ s p e c :   u s i n g   i n t e r s e c t i o n :   a v a i l = 1 9 ,   m i s s i n g = 7 7   ( i g n o r e d ) 
- 
- U s i n g   c p u   d e v i c e 
- 
- L o g g i n g   t o   l o g s / p p o _ g o l d _ m 5 \ P P O _ 1 2 3 
- 
- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
- 
- |   r o l l o u t /                       |                     | 
- 
- |         e p _ l e n _ m e a n           |   2                 | 
- 
- |         e p _ r e w _ m e a n           |   0                 | 
- 
- |   t i m e /                             |                     | 
- 
- |         f p s                           |   2 1 6             | 
- 
- |         i t e r a t i o n s             |   1                 | 
- 
- |         t i m e _ e l a p s e d         |   1 8               | 
- 
- |         t o t a l _ t i m e s t e p s   |   4 0 9 6           | 
- 
- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+# -*- coding: utf-8 -*-
+"""
+fetch__mt5_data.py
+------------------
+Pobiera świece M5 (inkrementalnie do 720 dni) oraz próbkę ticków z MT5.
+
+• Inkrementalny merge do jednego CSV z 720 dni (przycinanie, deduplikacja po 'time').
+• Obejścia brokerów: copy_rates_range (naive datetimes) z fallbackiem do copy_rates_from_pos (tail),
+  retry/backoff, chunkowanie przy pierwszym pobraniu.
+• Atomiczny zapis CSV.
+• Ticki weekend-safe (ostrzeżenie, nie przerywa).
+• Sugestie kosztów (median/p75 spread + heurystyka slippage_k).
+• Czas wszędzie UTC-aware.
+
+Użycie:
+    python fetch__mt5_data.py
+"""
+
+from __future__ import annotations
+
+import MetaTrader5 as mt5
+import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+import time
+import yaml
+
+# nasze utilsy
+from utils.atomic import atomic_write_csv
+from utils.mt5_health import ensure_mt5_ready
+
+# ============================================================
+# Konfiguracja
+# ============================================================
+CFG_PATH = 'config.yaml'
+cfg = yaml.safe_load(open(CFG_PATH, 'r', encoding='utf-8'))
+
+if not isinstance(cfg, dict) or 'files' not in cfg:
+    raise RuntimeError(f"{CFG_PATH} jest pusty lub ma złą strukturę (brak sekcji 'files').")
+
+SYMBOL = cfg.get('symbol', 'XAUUSD')
+BARS_CSV = cfg['files']['bars_csv']
+TICKS_CSV = cfg['files']['ticks_csv']
+HISTORY_DAYS = int(cfg.get('history_days', 720))
+
+TF_MAP = {
+    'M1':  mt5.TIMEFRAME_M1,
+    'M5':  mt5.TIMEFRAME_M5,
+    'M15': mt5.TIMEFRAME_M15,
+    'H1':  mt5.TIMEFRAME_H1,
+}
+TF_NAME = str(cfg.get('timeframe', 'M5'))
+TF = TF_MAP.get(TF_NAME, mt5.TIMEFRAME_M5)
+
+MT5_CFG = cfg.get('mt5', {}) or {}
+CHUNK = int(MT5_CFG.get('bars_chunk', 20000))   # 20k ~ 70–90 dni M5 (zależnie od brokera)
+UPDATE_DAYS = int(MT5_CFG.get('update_days', 60))
+
+# ============================================================
+# MT5 init / symbol utils
+# ============================================================
+def init_mt5():
+    """Initialize MT5 i wypisz krótkie info o terminalu/koncie."""
+    if not ensure_mt5_ready():
+        last_err = mt5.last_error()
+        raise RuntimeError(f"MT5 not ready (terminal/account). Start MT5 and login. last_error={last_err}")
+    term = mt5.terminal_info()
+    acc = mt5.account_info()
+    parts = []
+    if getattr(term, "company", None): parts.append(f"Company={term.company}")
+    if getattr(term, "name", None):    parts.append(f"TerminalName={term.name}")
+    if getattr(acc, "login", 0):       parts.append(f"Login={acc.login}")
+    if getattr(acc, "server", None):   parts.append(f"Server={acc.server}")
+    if getattr(acc, "name", None):     parts.append(f"AccountName={acc.name}")
+    print("[MT5] " + " | ".join(parts) if parts else "[MT5] initialized")
+
+def ensure_symbol(symbol: str) -> bool:
+    """Upewnij się, że symbol jest widoczny w Market Watch."""
+    info = mt5.symbol_info(symbol)
+    if info is None:
+        mt5.symbol_select(symbol, True)
+        info = mt5.symbol_info(symbol)
+        if info is None:
+            return False
+    if not info.visible:
+        if not mt5.symbol_select(symbol, True):
+            return False
+    return True
+
+def suggest_similar(symbol: str, limit=12):
+    """Podpowiedz nazwy symboli powiązanych (np. GOLD/XAU) – zależne od serwera."""
+    out = []
+    try:
+        for s in mt5.symbols_get():
+            nm = s.name.upper()
+            if ("GOLD" in nm) or ("XAU" in nm):
+                out.append(s.name)
+        if not out:
+            out = [s.name for s in mt5.symbols_get()][:limit]
+        return sorted(set(out))[:limit]
+    except Exception:
+        return []
+
+# ============================================================
+# Helpers
+# ============================================================
+def with_retries(fn, attempts=3, sleep_s=2, *a, **kw):
+    last = None
+    for i in range(attempts):
+        try:
+            return fn(*a, **kw)
+        except Exception as e:
+            last = e
+            time.sleep(sleep_s * (i + 1))
+    if last:
+        raise last
+
+def _to_df(rates) -> pd.DataFrame:
+    """Konwersja stawek MT5 -> kanoniczny DataFrame z sanity-checkiem kolumn i czasu."""
+    df = pd.DataFrame(rates)
+    if df.empty:
+        return df
+    df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
+    if 'real_volume' in df.columns:
+        df.rename(columns={'real_volume': 'tick_volume'}, inplace=True)
+    cols = ['time', 'open', 'high', 'low', 'close', 'tick_volume', 'spread']
+    # zachowaj tylko znane kolumny
+    df = df[[c for c in cols if c in df.columns]].copy()
+    # usuń zduplikowane nazwy i rekordy
+    df = (df.loc[:, ~df.columns.duplicated()]
+            .sort_values('time')
+            .drop_duplicates('time')
+            .reset_index(drop=True))
+    return df
+
+def _make_naive(dt: datetime) -> datetime:
+    """Zwróć 'naive' datetime (bez tzinfo) – część brokerów tego wymaga dla copy_rates_range."""
+    if dt.tzinfo is not None:
+        return dt.replace(tzinfo=None)
+    return dt
+
+# ============================================================
+# Pobieranie danych
+# ============================================================
+def fetch_range(symbol, timeframe, utc_from: datetime, utc_to: datetime) -> pd.DataFrame:
+    """
+    Pobierz zakres 'range' z obejściami:
+    • daty 'naive' (bez tzinfo),
+    • fallback: tail od końca (copy_rates_from_pos) gdy range zwraca pustkę/Invalid params.
+    """
+    frm_n = _make_naive(utc_from)
+    to_n  = _make_naive(utc_to)
+    rates = mt5.copy_rates_range(symbol, timeframe, frm_n, to_n)
+    if rates is None or len(rates) == 0:
+        # fallback: tail od końca
+        tail = mt5.copy_rates_from_pos(symbol, timeframe, 0, CHUNK)
+        if tail is None or len(tail) == 0:
+            last_err = mt5.last_error()
+            raise RuntimeError(f"copy_rates_range empty for '{symbol}'. last_error={last_err}")
+        return _to_df(tail)
+    return _to_df(rates)
+
+def fetch_from_pos_tail(symbol, timeframe, count) -> pd.DataFrame:
+    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, count)
+    if rates is None or len(rates) == 0:
+        last_err = mt5.last_error()
+        raise RuntimeError(f"copy_rates_from_pos empty for '{symbol}'. last_error={last_err}")
+    return _to_df(rates)
+
+def load_existing_bars(path: str):
+    p = Path(path)
+    if not p.exists():
+        return None
+    try:
+        df = pd.read_csv(p, parse_dates=['time'])
+        if df.empty:
+            return None
+        # Usuń kolumny techniczne i duplikaty nazw
+        bad = [c for c in df.columns if str(c).startswith('Unnamed')]
+        if bad:
+            df = df.drop(columns=bad)
+        df = df.loc[:, ~df.columns.duplicated()]
+        keep = ['time','open','high','low','close','tick_volume','spread']
+        df = df[[c for c in keep if c in df.columns]].copy()
+        # Upewnij się, że 'time' jest UTC-aware
+        if pd.api.types.is_datetime64_any_dtype(df['time']):
+            if df['time'].dt.tz is None:
+                df['time'] = df['time'].dt.tz_localize('UTC')
+            else:
+                df['time'] = df['time'].dt.tz_convert('UTC')
+        else:
+            df['time'] = pd.to_datetime(df['time'], utc=True)
+        df = (df.sort_values('time')
+                .drop_duplicates('time')
+                .reset_index(drop=True))
+        return df
+    except Exception:
+        return None
+
+def merge_clip(existing: pd.DataFrame | None, new_df: pd.DataFrame, keep_days: int) -> pd.DataFrame:
+    """Scal istniejące i nowe świece, deduplikuj po 'time', przytnij do keep_days i oczyść nagłówki."""
+    def _sanitize(d):
+        if d is None or d.empty:
+            return d
+        d = d.loc[:, ~d.columns.duplicated()]
+        bad = [c for c in d.columns if str(c).startswith('Unnamed')]
+        if bad:
+            d = d.drop(columns=bad)
+        return d
+
+    existing = _sanitize(existing)
+    new_df   = _sanitize(new_df)
+
+    if existing is None or existing.empty:
+        base = new_df.copy()
+    else:
+        common = [c for c in existing.columns if c in new_df.columns]
+        base = (pd.concat([existing[common], new_df[common]], axis=0, ignore_index=True, copy=False)
+                  .drop_duplicates('time')
+                  .sort_values('time'))
+
+    # time -> UTC-aware
+    if pd.api.types.is_datetime64_any_dtype(base['time']):
+        if base['time'].dt.tz is None:
+            base['time'] = base['time'].dt.tz_localize('UTC')
+        else:
+            base['time'] = base['time'].dt.tz_convert('UTC')
+    else:
+        base['time'] = pd.to_datetime(base['time'], utc=True)
+
+    # clip do okna czasowego
+    cutoff = datetime.now(timezone.utc) - timedelta(days=keep_days + 1)
+    base = base[base['time'] >= pd.Timestamp(cutoff)].reset_index(drop=True)
+    return base
+
+def fetch_bars_incremental(symbol, timeframe, keep_days: int, update_days: int) -> pd.DataFrame:
+    """
+    Strategia:
+    • Gdy brak pliku – zbierz historię 'od końca' (copy_rates_from_pos) w 1–4 chunkach,
+      aż pokryjesz ~keep_days (z marginesem). Jeśli to się nie uda – spróbuj krótkiego range.
+    • Gdy plik istnieje – dociągnij ostatnie update_days (mały range z fallbackiem).
+    """
+    existing = load_existing_bars(BARS_CSV)
+    if existing is None:
+        wanted_days = keep_days + 2
+        parts_df = None
+        # 1–4 próby z narastającą liczbą świec (od końca)
+        for i in range(1, 5):
+            count = CHUNK * i
+            try:
+                dft = with_retries(lambda: fetch_from_pos_tail(symbol, timeframe, count))
+            except Exception:
+                time.sleep(1.0)
+                continue
+            if dft is not None and len(dft) > 0:
+                parts_df = dft
+                span_days = (parts_df['time'].max() - parts_df['time'].min()).days
+                if span_days >= wanted_days:
+                    break
+        if parts_df is None or parts_df.empty:
+            # Ostatnia próba – krótki range (np. 60 dni)
+            to  = datetime.now(timezone.utc)
+            frm = to - timedelta(days=min(60, wanted_days))
+            parts_df = fetch_range(symbol, timeframe, frm, to)
+        return merge_clip(None, parts_df, keep_days)
+
+    # Inkrementalnie: dociągnij update_days (mały range z fallbackiem)
+    to  = datetime.now(timezone.utc)
+    frm = to - timedelta(days=max(2, update_days))
+    fresh = fetch_range(symbol, timeframe, frm, to)
+    merged = merge_clip(existing, fresh, keep_days)
+    return merged
+def fetch_ticks(symbol: str, hours: int = 24) -> pd.DataFrame:
+    utc_to   = datetime.now(timezone.utc)
+    utc_from = utc_to - timedelta(hours=hours)
+    ticks = mt5.copy_ticks_range(symbol, utc_from, utc_to, mt5.COPY_TICKS_ALL)
+    if ticks is None or len(ticks) == 0:
+        last_err = mt5.last_error()
+        raise RuntimeError(f"No MT5 ticks for '{symbol}'. last_error={last_err}")
+    tdf = pd.DataFrame(ticks)
+    tdf['time'] = pd.to_datetime(tdf['time'], unit='s', utc=True)
+    return tdf[['time', 'bid', 'ask', 'last', 'volume']]
+
+def suggest_costs(tdf: pd.DataFrame) -> dict:
+    """Sugeruj koszty na bazie ticków: median/p75 spread, heurystyczny slippage_k."""
+    spr = (tdf['ask'] - tdf['bid']).astype(float).replace([np.inf, -np.inf], np.nan).dropna()
+    med_spread = float(np.median(spr)) if len(spr) else 0.0
+    p75_spread = float(np.percentile(spr, 75)) if len(spr) else 0.0
+    mid = (tdf['ask'] + tdf['bid']) / 2.0
+    dm = (mid.diff().abs()).replace([np.inf, -np.inf], np.nan).dropna()
+    med_dm = float(np.median(dm)) if len(dm) else 0.0
+    med_price = float(np.nanmedian(mid)) if len(mid) else 1.0
+    # heurystyka: jaką część typowego ruchu stanowi przeciętny skok mida
+    slippage_k = float(min(max(med_dm / max(med_price, 1e-12), 0.0), 0.01))
+    return {
+        'spread_abs_median': round(med_spread, 5),
+        'spread_abs_p75':    round(p75_spread, 5),
+        'slippage_k_suggested': round(slippage_k, 4)
+    }
+
+# ============================================================
+# Main
+# ============================================================
+def main():
+    init_mt5()
+    try:
+        print(f"[CFG] symbol={SYMBOL} tf={TF_NAME} keep_days={HISTORY_DAYS} update_days={UPDATE_DAYS}")
+
+        if not ensure_symbol(SYMBOL):
+            similar = suggest_similar(SYMBOL)
+            hint = ", ".join(similar) if similar else "(brak propozycji)"
+            raise SystemExit(
+                "Symbol not found or not visible in Market Watch: '{}'\n"
+                "Try one of these (server-specific): {}\n"
+                "Also open Symbols window and SHOW the instrument."
+                .format(SYMBOL, hint)
+            )
+
+        # ŚWIECE
+        bars = fetch_bars_incremental(SYMBOL, TF, keep_days=HISTORY_DAYS, update_days=UPDATE_DAYS)
+        assert {'time', 'open', 'high', 'low', 'close'}.issubset(bars.columns), "Bars frame malformed"
+        assert len(bars) > 100, "Too few bars"
+        atomic_write_csv(bars, BARS_CSV)
+        print(f"Saved bars: {BARS_CSV} ({len(bars)})")
+
+        # TICKI (opcjonalnie; weekend-safe)
+        try:
+            ticks = with_retries(lambda: fetch_ticks(SYMBOL, hours=24))
+            atomic_write_csv(ticks, TICKS_CSV)
+            print(f"Saved ticks: {TICKS_CSV} ({len(ticks)})")
+
+            sugg = suggest_costs(ticks)
+            rep = Path('reports'); rep.mkdir(parents=True, exist_ok=True)
+            Path('reports/costs_suggestion.yaml').write_text(
+                yaml.safe_dump(sugg, allow_unicode=True, sort_keys=False),
+                encoding='utf-8'
+            )
+            print("Cost suggestions -> reports/costs_suggestion.yaml")
+        except Exception as e:
+            # np. weekend: brak ticków (OK)
+            print(f"[warn] ticks unavailable ({e}); keeping previous {TICKS_CSV}")
+
+    finally:
+        mt5.shutdown()
+
+if __name__ == '__main__':
+    main()
+
+
+
+# features/build_features.py
+# -*- coding: utf-8 -*-
+import pandas as pd, numpy as np, yaml, os
+from pathlib import Path
+
+# === config / ścieżki ===
+cfg  = yaml.safe_load(open('config.yaml','r',encoding='utf-8'))
+BARS = Path(cfg['files']['bars_csv'])
+TICKS = Path(cfg['files'].get('ticks_csv', ''))
+FEAT = Path(cfg['files']['features_csv'])
+
+ROOT = Path(__file__).resolve().parents[1]
+
+def atomic_write_csv(df: pd.DataFrame, path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    df.to_csv(tmp, index=False)
+    tmp.replace(path)
+
+# === wczytanie bazowych świec ===
+def load_bars():
+    df = pd.read_csv(BARS, parse_dates=['time'])
+    df = df.sort_values('time').reset_index(drop=True)
+    # standaryzacja nazw (jeśli pochodzi z innego źródła)
+    df = df.rename(columns={
+        'Open':'open','High':'high','Low':'low','Close':'close',
+        'Volume':'tick_volume','TickVolume':'tick_volume','Spread':'spread'
+    })
+    for c in ['open','high','low','close']:
+        if c not in df.columns:
+            raise RuntimeError(f"Brak kolumny '{c}' w {BARS}")
+    if 'tick_volume' not in df.columns: df['tick_volume'] = np.nan
+    if 'spread' not in df.columns: df['spread'] = np.nan
+    return df
+
+# === ticki (opcjonalnie) ===
+def maybe_merge_ticks(base_df: pd.DataFrame):
+    if not (TICKS and TICKS.exists()):
+        return base_df
+    t = pd.read_csv(TICKS)
+    tcol = 'time' if 'time' in t.columns else ('DateTime' if 'DateTime' in t.columns else None)
+    if tcol is None:
+        return base_df
+    t[tcol] = pd.to_datetime(t[tcol], utc=True)
+    t = t.rename(columns={tcol:'time'})
+    if {'bid','ask'}.issubset(t.columns):
+        t['spread_abs'] = (t['ask'] - t['bid']).abs()
+        t['time_rounded'] = t['time'].dt.floor('min')
+        agg = (t.groupby('time_rounded')
+                 .agg(spread_abs_median=('spread_abs','median'),
+                      spread_abs_p75   =('spread_abs', lambda x: x.quantile(0.75)),
+                      tick_count       =('spread_abs','size'))
+                 .reset_index().rename(columns={'time_rounded':'time'}))
+        out = pd.merge_asof(
+            base_df.sort_values('time'), agg.sort_values('time'),
+            on='time', direction='backward', tolerance=pd.Timedelta('10min')
+        )
+        for c in ['spread_abs_median','spread_abs_p75','tick_count']:
+            if c not in out.columns: out[c] = np.nan
+        # zachowawczo: na razie 0; możesz przeskalować wg p75 jeśli chcesz
+        out['slippage_k_suggested'] = (out['spread_abs_p75'].fillna(out['spread'].abs().fillna(0))) * 0.0
+        return out
+    return base_df
+
+# === wskaźniki ===
+def macd(series, fast=12, slow=26, signal=9):
+    ema_fast = series.ewm(span=fast, adjust=False).mean()
+    ema_slow = series.ewm(span=slow, adjust=False).mean()
+    macd_line = ema_fast - ema_slow
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    return macd_line, signal_line, macd_line - signal_line
+
+def bbands(series, period=20, n_std=2.0):
+    ma = series.rolling(period).mean()
+    sd = series.rolling(period).std()
+    upper = ma + n_std*sd; lower = ma - n_std*sd
+    width = (upper - lower) / (ma.abs() + 1e-12)
+    return ma, upper, lower, width
+
+def add_tech_features(df):
+    df = df.sort_values('time').reset_index(drop=True)
+    c = df['close']
+
+    # bazowe
+    df['ret1'] = np.log(c).diff()
+    for w in [8,10,12,20,30,50,100,200]:
+        df[f'ema{w}'] = c.ewm(span=w, adjust=False).mean()
+    for w in [20,50,100,200]:
+        df[f'sma{w}'] = c.rolling(w, min_periods=int(w*0.8)).mean()
+
+    # RSI / ATR
+    d = c.diff()
+    up = d.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
+    down = (-d.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
+    rs = up / (down + 1e-12)
+    df['rsi14'] = 100 - (100/(1+rs))
+
+    h, l, cl = df['high'], df['low'], df['close']
+    tr = np.maximum(h-l, np.maximum((h-cl.shift()).abs(), (l-cl.shift()).abs()))
+    for n in [7,14,21]:
+        df[f'atr{n}'] = tr.ewm(alpha=1/n, adjust=False).mean()
+
+    # MACD (klasyczny + warianty)
+    m,s,hst = macd(c, 12,26,9)
+    df['macd']=m; df['macd_signal']=s; df['macd_hist']=hst
+    for (fa,sl,sg) in [(8,17,9),(5,35,5)]:
+        m,s,hst = macd(c, fa,sl,sg)
+        tag = f"{fa}_{sl}_{sg}"
+        df[f'macd_{tag}']=m; df[f'macd_signal_{tag}']=s; df[f'macd_hist_{tag}']=hst
+
+    # Bollinger
+    bb_ma, bb_up, bb_lo, bb_w = bbands(c, period=20, n_std=2.0)
+    df['bb_ma']=bb_ma; df['bb_up']=bb_up; df['bb_lo']=bb_lo; df['bb_width']=bb_w
+
+    # Donchian / Keltner
+    for n in [20,55]:
+        df[f'donchian_hi{n}'] = df['high'].rolling(n).max()
+        df[f'donchian_lo{n}'] = df['low'].rolling(n).min()
+        df[f'donchian_mid{n}']= (df[f'donchian_hi{n}'] + df[f'donchian_lo{n}'])/2
+    for n in [20]:
+        ema = c.ewm(span=n, adjust=False).mean()
+        atr = tr.ewm(alpha=1/n, adjust=False).mean()
+        df[f'keltner_mid{n}'] = ema
+        df[f'keltner_up{n}']  = ema + 2*atr
+        df[f'keltner_lo{n}']  = ema - 2*atr
+
+    # Ichimoku (bez przesuwania w przód – brak leak)
+    conv = (df['high'].rolling(9).max()  + df['low'].rolling(9).min())/2
+    base = (df['high'].rolling(26).max() + df['low'].rolling(26).min())/2
+    leadA= (conv + base)/2
+    leadB= (df['high'].rolling(52).max() + df['low'].rolling(52).min())/2
+    df['ichi_conv9']=conv; df['ichi_base26']=base; df['ichi_leadA']=leadA; df['ichi_leadB']=leadB
+
+    # Fibonacci – relacja do poziomów z okna
+    for win in [50,100]:
+        hi = df['high'].rolling(win).max()
+        lo = df['low'].rolling(win).min()
+        rng = (hi - lo).replace(0, np.nan)
+        for lvl,name in [(0.236,'0236'),(0.382,'0382'),(0.5,'0500'),(0.618,'0618'),(0.786,'0786')]:
+            fib = lo + lvl*rng
+            df[f'fibo_ret_{name}_win{win}'] = (df['close'] - fib) / (rng + 1e-12)
+
+    # Pivot / Stoch / CCI / ROC
+    pp = (df['high'].shift() + df['low'].shift() + df['close'].shift())/3
+    r1 = 2*pp - df['low'].shift()
+    s1 = 2*pp - df['high'].shift()
+    df['pivot_pp']=pp; df['pivot_r1']=r1; df['pivot_s1']=s1
+
+    n = 14
+    low_n  = df['low'].rolling(n).min()
+    high_n = df['high'].rolling(n).max()
+    k = 100 * (df['close'] - low_n) / ((high_n - low_n) + 1e-12)
+    d = k.rolling(3).mean()
+    df['stoch_k']=k; df['stoch_d']=d
+
+    typ = (df['high'] + df['low'] + df['close'])/3
+    sma = typ.rolling(20).mean()
+    mad = (typ - sma).abs().rolling(20).mean()
+    df['cci20'] = (typ - sma) / (0.015 * (mad + 1e-12))
+
+    for n in [5,10,20]:
+        df[f'roc{n}'] = df['close'].pct_change(n)
+
+    # cykle doby/tygodnia
+    minute = df['time'].dt.hour*60 + df['time'].dt.minute
+    df['tod_sin'] = np.sin(2*np.pi*minute/1440); df['tod_cos'] = np.cos(2*np.pi*minute/1440)
+    dow = df['time'].dt.dayofweek
+    df['dow_sin'] = np.sin(2*np.pi*dow/7);    df['dow_cos'] = np.cos(2*np.pi*dow/7)
+
+    # log i z‑score ceny + z‑score dla wybranych cech
+    df['close_log'] = np.log(c.clip(lower=1e-12))
+    mu = df['close_log'].rolling(2000, min_periods=200).mean()
+    sd = df['close_log'].rolling(2000, min_periods=200).std().replace(0, np.nan)
+    df['close_norm'] = (df['close_log'] - mu) / (sd + 1e-8)
+
+    feat_cols = [
+      'ret1','ema10','ema20','ema50','ema100','ema200',
+      'sma20','sma50','sma100','sma200',
+      'rsi14','atr7','atr14','atr21',
+      'macd','macd_signal','macd_hist',
+      'macd_8_17_9','macd_signal_8_17_9','macd_hist_8_17_9',
+      'macd_5_35_5','macd_signal_5_35_5','macd_hist_5_35_5',
+      'bb_ma','bb_up','bb_lo','bb_width',
+      'donchian_hi20','donchian_lo20','donchian_mid20',
+      'donchian_hi55','donchian_lo55','donchian_mid55',
+      'keltner_mid20','keltner_up20','keltner_lo20',
+      'ichi_conv9','ichi_base26','ichi_leadA','ichi_leadB',
+      'fibo_ret_0236_win50','fibo_ret_0382_win50','fibo_ret_0500_win50','fibo_ret_0618_win50','fibo_ret_0786_win50',
+      'fibo_ret_0236_win100','fibo_ret_0382_win100','fibo_ret_0500_win100','fibo_ret_0618_win100','fibo_ret_0786_win100',
+      'pivot_pp','pivot_r1','pivot_s1','stoch_k','stoch_d','cci20','roc5','roc10','roc20',
+      'tod_sin','tod_cos','dow_sin','dow_cos'
+    ]
+    for col in feat_cols:
+        if col in df.columns:
+            mu = df[col].rolling(2000, min_periods=200).mean()
+            sd = df[col].rolling(2000, min_periods=200).std().replace(0, np.nan)
+            df[col] = (df[col] - mu) / (sd + 1e-8)
+
+    return df
+
+def main():
+    # 1) OHLC
+    df = load_bars()
+    # 2) ticki (opcjonalne)
+    df = maybe_merge_ticks(df)
+    # 3) wskaźniki
+    df = add_tech_features(df)
+
+    # 4) (ŚWIADOMIE) nie dokładamy tutaj fundamentów/kalendarza — robi to Feature Discovery.
+    #    Dzięki temu unikamy duplikatów i centralizujemy logikę dołączania external data.
+
+    # 5) Oczyść początek serii po rollingach
+    df = df.dropna().reset_index(drop=True)
+
+    # 6) Zapis atomowy
+    atomic_write_csv(df, FEAT)
+
+    # 7) features_spec.json:
+    #    Nie nadpisujemy tego, co generuje Feature Discovery.
+    #    Jeśli brak pliku (pierwszy start), zrób prosty spec z bieżących kolumn.
+    spec_path = ROOT / "models" / "features_spec.json"
+    if not spec_path.exists():
+        base_cols = ['time','open','high','low','close','tick_volume','spread']
+        feature_columns = [c for c in df.columns if c not in base_cols + ['close_log','close_norm']]
+        spec = {"feature_columns": feature_columns, "price_column":"close_norm"}
+        spec_path.parent.mkdir(parents=True, exist_ok=True)
+        spec_path.write_text(
+            json.dumps(spec, ensure_ascii=False, indent=2), encoding='utf-8'
+        )
+        print("Saved initial models/features_spec.json (first run).")
+
+    print(f"Saved features -> {FEAT.as_posix()} (rows={len(df)}, cols={len(df.columns)})")
+
+if __name__ == "__main__":
+    import json
+    main()
