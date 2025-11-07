@@ -1,9 +1,9 @@
-daemon_calibration_biweekly
-daemon_cleanup
-daemon_daily_report
-daemon_feature_discovery
-daemon_fetch_features
-daemon_mini_update
-daemon_nightly_report
-daemon_nightly_train
-daemon_te_calendar
+
+cd C:\xau_rl
+$PY = ".\.venv\Scripts\python.exe"
+& $PY "ops\calibration_biweekly.py"
+
+
+
+cd C:\xau_rl
+.\ops\daemon_calibration_biweekly.ps1
