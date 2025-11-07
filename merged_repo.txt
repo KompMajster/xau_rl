@@ -1,1 +1,17 @@
 (.venv) PS C:\xau_rl> python -X faulthandler -u ops\mini_update_ppo.py --timesteps 300000 --train_days 120 --val_days 30 --seed 42
+[mini_update] features_csv=data/XAUUSD_M5_features.csv
+[mini_update] df rows=263  from=2025-11-06 15:25:00  to=2025-11-07 14:20:00
+[mini_update] ranges: train_start=2025-06-10 14:20:00  val_start=2025-10-08 14:20:00  val_end=2025-11-07 14:20:00
+[mini_update] counts: train=0  val=263  (WINDOW=128)
+[mini_update][fallback-tight] train=130, val=133
+[mini_update] Training on 130 rows (~120d), timesteps=300000
+
+[mini_update][FATAL] Uncaught exception:
+
+Traceback (most recent call last):
+  File "C:\xau_rl\ops\mini_update_ppo.py", line 237, in <module>
+    main()
+    ~~~~^^
+  File "C:\xau_rl\ops\mini_update_ppo.py", line 152, in main
+    from env_xau import XauTradingEnv
+ModuleNotFoundError: No module named 'env_xau'
