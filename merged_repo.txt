@@ -1,8 +1,38 @@
-Out-File : Proces nie moľe uzyska† dost©pu do pliku "C:\xau_rl\logs\services\nightly_report.log", p
-oniewaľ jest on uľywany przez inny proces.
-At C:\xau_rl\ops\daemon_nightly_report.ps1:34 char:34
-+ ... R] $($_|Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
-+                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : OpenError: (:) [Out-File], IOException
-    + FullyQualifiedErrorId : FileOpenFailure,Microsoft.PowerShell.Commands.OutFileCommand
- 
+$ErrorActionPreference="Stop"
+$REPO="C:\xau_rl"; $PY="$REPO\.venv\Scripts\python.exe"
+$LOG="$REPO\logs\services\nightly_report.log"; $LOCK="$REPO\logs\services\nightly_report.lock"
+New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null; Set-Location $REPO
+if(-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0){
+  "[$(Get-Date -Format o)] [nightly_report] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
+}
+function Acquire-Lock { if(Test-Path $LOCK){$false}else{New-Item -ItemType File -Path $LOCK -Force|Out-Null;$true} }
+function Release-Lock { if(Test-Path $LOCK){Remove-Item $LOCK -Force} }
+function Run-Once {
+  & $PY "rl\evaluate.py" "--out_dir" "reports" *>> $LOG
+  & $PY "utils\make_report.py"                 *>> $LOG
+}
+function Seconds-To-Next-2300 {
+  $now = Get-Date
+  $target = [DateTime]::Today.AddHours(23)
+  if ($now -ge $target) { $target = $target.AddDays(1) }
+  $diff = $target - $now
+  return ([int]$diff.TotalSeconds)
+}
+while($true){
+  Start-Sleep -Seconds (Seconds-To-Next-2300)
+  $ts=Get-Date -Format o
+  try{
+    if(Acquire-Lock){
+      "`n[$ts] [nightly_report] start" | Out-File -FilePath $LOG -Append -Encoding utf8
+      Run-Once
+      "`n[$(Get-Date -Format o)] [nightly_report] done"  | Out-File -FilePath $LOG -Append -Encoding utf8
+      Release-Lock
+    } else {
+      "`n[$ts] [nightly_report] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
+    }
+  } catch {
+    "[ERROR] $($_|Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
+    Release-Lock
+  }
+  Start-Sleep -Seconds (24*3600 - 60)
+}
