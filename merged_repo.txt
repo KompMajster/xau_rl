@@ -1,20 +1,241 @@
+# -*- coding: utf-8 -*-
+"""
+ops/mini_update_ppo.py – bezpieczny mini-update PPO na świeżych danych (z rozszerzonym logowaniem).
+Użycie:
+  python ops/mini_update_ppo.py --timesteps 300000 --train_days 120 --val_days 30 --seed 42
+"""
 
-[2025-11-07T16:22:15.8032920+01:00] [mini_update] start
-[ m i n i _ u p d a t e ]   f e a t u r e s _ c s v = d a t a / X A U U S D _ M 5 _ f e a t u r e s . c s v 
- 
- [ m i n i _ u p d a t e ]   d f   r o w s = 2 6 3     f r o m = 2 0 2 5 - 1 1 - 0 6   1 5 : 1 5 : 0 0     t o = 2 0 2 5 - 1 1 - 0 7   1 4 : 1 0 : 0 0 
- 
- [ m i n i _ u p d a t e ]   r a n g e s :   t r a i n _ s t a r t = 2 0 2 5 - 0 6 - 1 0   1 4 : 1 0 : 0 0     v a l _ s t a r t = 2 0 2 5 - 1 0 - 0 8   1 4 : 1 0 : 0 0     v a l _ e n d = 2 0 2 5 - 1 1 - 0 7   1 4 : 1 0 : 0 0 
- 
- [ m i n i _ u p d a t e ]   c o u n t s :   t r a i n = 0     v a l = 2 6 3     ( W I N D O W = 1 2 8 ) 
- 
- [ m i n i _ u p d a t e ]   T r a i n i n g   o n   0   r o w s   ( ~ 1 2 0 d ) ,   t i m e s t e p s = 3 0 0 0 0 0 
- 
- [ERROR] 
-python.exe : 
-At C:\xau_rl\ops\daemon_mini_update.ps1:50 char:5
-+     & $PY -u "ops\mini_update_ppo.py" "--timesteps" "300000" *>> $LOG
-+     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
-    + FullyQualifiedErrorId : NativeCommandError
- 
+import argparse
+import json
+import sys
+import traceback
+from pathlib import Path
+
+import pandas as pd
+import yaml
+from gymnasium.wrappers import TimeLimit
+from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import EvalCallback
+from stable_baselines3.common.utils import set_random_seed
+from stable_baselines3.common.vec_env import (
+    DummyVecEnv,
+    VecMonitor,
+    VecNormalize,
+    sync_envs_normalization,
+)
+
+
+# ------------------------ CLI ------------------------
+ap = argparse.ArgumentParser()
+ap.add_argument("--timesteps", type=int, default=300000)
+ap.add_argument("--train_days", type=int, default=120)
+ap.add_argument("--val_days", type=int, default=30)
+ap.add_argument("--seed", type=int, default=42)
+args = ap.parse_args()
+
+
+# ------------------------ Utils ------------------------
+def _to_naive_utc(series: pd.Series) -> pd.Series:
+    """Ujednolicenie czasu: zwróć datetime64[ns] bez tzinfo (naive, w UTC)."""
+    if pd.api.types.is_datetime64_any_dtype(series):
+        try:
+            # jeżeli tz-aware → na UTC → zdejmij tzinfo
+            if getattr(series.dt, "tz", None) is not None:
+                return series.dt.tz_convert("UTC").dt.tz_localize(None)
+            return series
+        except Exception:
+            # różne typy → zparsuj jeszcze raz
+            return pd.to_datetime(series, utc=True).dt.tz_localize(None)
+    return pd.to_datetime(series, utc=True).dt.tz_localize(None)
+
+
+def main():
+    # ------------------------ Config ------------------------
+    cfg = yaml.safe_load(open("config.yaml", "r", encoding="utf-8"))
+    FEAT = cfg["files"]["features_csv"]
+    MODEL_PATH = Path(cfg["files"]["model_path"])
+    VECNORM_PATH = Path(cfg.get("files", {}).get("vecnorm_path", "models/vecnorm_xauusd_m5.pkl"))
+    WINDOW = int(cfg.get("window", 128))
+    COSTS = cfg["costs"]
+    ENV_CFG = cfg.get("env", {}) or {}
+    REWARD_MODE = ENV_CFG.get("reward_mode", cfg.get("reward_mode", "pct"))
+    FLIP_PENALTY = float(ENV_CFG.get("flip_penalty", cfg.get("flip_penalty", 0.0)))
+    TRADE_HOURS = ENV_CFG.get("trade_hours_utc", cfg.get("trade_hours_utc", None))
+    MIN_EQ = float(ENV_CFG.get("min_equity", 0.8))
+
+    # ------------------------ Dane + sanity ------------------------
+    df = pd.read_csv(FEAT, parse_dates=["time"])
+    df = df.sort_values("time").drop_duplicates("time").reset_index(drop=True)
+    df["time"] = _to_naive_utc(df["time"])  # standaryzuj czas
+
+    total_rows = len(df)
+    tmin, tmax = (None, None)
+    if total_rows > 0:
+        tmin, tmax = df["time"].min(), df["time"].max()
+
+    print(f"[mini_update] features_csv={FEAT}", flush=True)
+    print(f"[mini_update] df rows={total_rows}  from={tmin}  to={tmax}", flush=True)
+
+    # okna czasowe wg dni (docelowo)
+    val_end = tmax
+    val_start = val_end - pd.Timedelta(days=args.val_days) if val_end is not None else None
+    train_start = val_start - pd.Timedelta(days=args.train_days) if val_start is not None else None
+
+    if total_rows > 0:
+        train_df = df[(df["time"] >= train_start) & (df["time"] < val_start)].copy()
+        val_df = df[(df["time"] >= val_start) & (df["time"] <= val_end)].copy()
+    else:
+        train_df = df.iloc[:0].copy()
+        val_df = df.iloc[:0].copy()
+
+    print(f"[mini_update] ranges: train_start={train_start}  val_start={val_start}  val_end={val_end}")
+    print(f"[mini_update] counts: train={len(train_df)}  val={len(val_df)}  (WINDOW={WINDOW})", flush=True)
+
+    # zapis krótkiego debug CSV (łatwo potem porównać)
+    Path("logs").mkdir(parents=True, exist_ok=True)
+    try:
+        pd.DataFrame(
+            {
+                "tmin": [tmin],
+                "tmax": [tmax],
+                "train_start": [train_start],
+                "val_start": [val_start],
+                "val_end": [val_end],
+                "train_rows": [len(train_df)],
+                "val_rows": [len(val_df)],
+                "window": [WINDOW],
+                "total_rows": [total_rows],
+            }
+        ).to_csv("logs/debug_mini_update.csv", index=False)
+    except Exception:
+        pass
+
+    # ------------------------ Fallback dla krótkiej próbki ------------------------
+    # 1) „Tight” fallback: jeśli mamy >= 2*WINDOW + 5 obserwacji, to walidacja = ostatnie (WINDOW+5),
+    #    a trenowanie = reszta. Dzięki temu działa nawet przy bardzo krótkim ogonie.
+    if len(train_df) <= WINDOW or len(val_df) <= WINDOW:
+        tight_need = 2 * WINDOW + 5
+        if total_rows >= tight_need:
+            val_len = WINDOW + 5
+            train_df = df.iloc[: total_rows - val_len, :].copy()
+            val_df = df.iloc[total_rows - val_len :, :].copy()
+            print(f"[mini_update][fallback-tight] train={len(train_df)}, val={len(val_df)}", flush=True)
+
+    # 2) Jeżeli nadal za mało, spróbuj „compact tail”: weź minimalny fragment 2*WINDOW+2 i podziel tak,
+    #    by obie części były > WINDOW (np. 60/40 z lekkim zapasem).
+    if len(train_df) <= WINDOW or len(val_df) <= WINDOW:
+        min_need = 2 * WINDOW + 2
+        if total_rows >= min_need:
+            tail = df.iloc[-min_need:, :].copy()
+            split = min_need - (WINDOW + 2)  # ciut więcej niż samo WINDOW na train
+            train_df = tail.iloc[:split, :].copy()
+            val_df = tail.iloc[split:, :].copy()
+            print(f"[mini_update][fallback-compact] train={len(train_df)}, val={len(val_df)}", flush=True)
+
+    print(
+        f"[mini_update] Training on {len(train_df)} rows (~{args.train_days}d), timesteps={args.timesteps}",
+        flush=True,
+    )
+    if len(train_df) <= WINDOW or len(val_df) <= WINDOW:
+        raise RuntimeError(f"Too few rows for window={WINDOW}: train={len(train_df)}, val={len(val_df)}")
+
+    # ------------------------ features_spec ------------------------
+    features_spec = None
+    fspec = Path("models/features_spec.json")
+    if fspec.exists():
+        try:
+            features_spec = json.loads(fspec.read_text(encoding="utf-8")).get("feature_columns", None)
+        except Exception:
+            features_spec = None
+
+    # ------------------------ Środowiska RL ------------------------
+    from env_xau import XauTradingEnv
+
+    def make_train():
+        env = XauTradingEnv(
+            train_df,
+            window=WINDOW,
+            spread_abs=COSTS["spread_abs"],
+            commission_rate=COSTS["commission_rate"],
+            slippage_k=COSTS["slippage_k"],
+            reward_mode=REWARD_MODE,
+            use_close_norm=True,
+            flip_penalty=FLIP_PENALTY,
+            trade_hours_utc=TRADE_HOURS,
+            enforce_flat_outside_hours=True,
+            features_spec=features_spec,
+            min_equity=MIN_EQ,
+        )
+        return TimeLimit(env, max_episode_steps=6000)
+
+    def make_eval():
+        env = XauTradingEnv(
+            val_df,
+            window=WINDOW,
+            spread_abs=COSTS["spread_abs"],
+            commission_rate=COSTS["commission_rate"],
+            slippage_k=COSTS["slippage_k"],
+            reward_mode=REWARD_MODE,
+            use_close_norm=True,
+            flip_penalty=0.0,  # bez kary na walidacji
+            trade_hours_utc=TRADE_HOURS,
+            enforce_flat_outside_hours=True,
+            features_spec=features_spec,
+            min_equity=MIN_EQ,
+        )
+        return TimeLimit(env, max_episode_steps=3000)
+
+    set_random_seed(args.seed)
+    vtrain = DummyVecEnv([make_train])
+    vtrain = VecMonitor(vtrain)
+    vtrain = VecNormalize(vtrain, norm_obs=True, norm_reward=True, clip_obs=10.0, clip_reward=10.0)
+
+    veval = DummyVecEnv([make_eval])
+    veval = VecMonitor(veval)
+    veval = VecNormalize(veval, training=False, norm_obs=True, norm_reward=False)
+
+    sync_envs_normalization(veval, vtrain)
+
+    # ------------------------ PPO ------------------------
+    policy_kwargs = dict(net_arch=dict(pi=[128, 128], vf=[128, 128]))
+    tb_log_dir = "logs/ppo_gold_m5"
+    model = PPO(
+        "MlpPolicy",
+        vtrain,
+        n_steps=4096,
+        batch_size=256,
+        learning_rate=3e-4,
+        ent_coef=0.02,
+        policy_kwargs=policy_kwargs,
+        seed=args.seed,
+        verbose=1,
+        tensorboard_log=tb_log_dir,
+    )
+
+    eval_cb = EvalCallback(
+        veval,
+        best_model_save_path=str(MODEL_PATH.parent),
+        log_path="logs/eval",
+        eval_freq=max(args.timesteps // 4, 10000),
+        n_eval_episodes=1,
+        deterministic=True,
+        render=False,
+    )
+
+    model.learn(total_timesteps=args.timesteps, callback=eval_cb)
+
+    # ------------------------ Save ------------------------
+    MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+    model.save(str(MODEL_PATH))
+    vtrain.save(str(VECNORM_PATH))
+    print(f"[mini_update] Saved model -> {MODEL_PATH}")
+    print(f"[mini_update] Saved VecNormalize -> {VECNORM_PATH}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        print("\n[mini_update][FATAL] Uncaught exception:\n", file=sys.stderr, flush=True)
+        traceback.print_exc()
+        sys.exit(1)
