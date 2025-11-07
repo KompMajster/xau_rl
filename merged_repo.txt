@@ -1,30 +1,45 @@
+# encoding: utf-8
 $ErrorActionPreference="Stop"
+
 $REPO="C:\xau_rl"; $PY="$REPO\.venv\Scripts\python.exe"
-$LOG="$REPO\logs\services\fetch_features.log"; $LOCK="$REPO\logs\services\fetch_features.lock"
-New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null; Set-Location $REPO
+$LOG ="$REPO\logs\services\mini_update_ppo.log"
+$LOCK="$REPO\logs\services\mini_update_ppo.lock"
+
+New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null
+Set-Location $REPO
+
+# Pierwsza linia w logu (jak u Ciebie)
 if(-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0){
-  "[$(Get-Date -Format o)] [fetch_features] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
+  "[$(Get-Date -Format o)] [mini_update] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
 }
-function Acquire-Lock { if(Test-Path $LOCK){$false}else{New-Item -ItemType File -Path $LOCK -Force|Out-Null;$true} }
-function Release-Lock { if(Test-Path $LOCK){Remove-Item $LOCK -Force} }
+
+function Acquire-Lock {
+  if(Test-Path $LOCK){ $false } else { New-Item -ItemType File -Path $LOCK -Force | Out-Null; $true }
+}
+function Release-Lock {
+  if(Test-Path $LOCK){ Remove-Item $LOCK -Force }
+}
+
 function Run-Once {
-  & $PY "fetch__mt5_data.py"         *>> $LOG
-  & $PY "features\build_features.py" *>> $LOG
+  # dokładnie ten sam mechanizm redirekcji co w fetch_features (all-streams)
+  & $PY -u "ops\mini_update_ppo.py" "--timesteps" "300000" *>> $LOG
 }
+
 while($true){
   $ts=Get-Date -Format o
   try{
     if(Acquire-Lock){
-      "`n[$ts] [fetch_features] start" | Out-File -FilePath $LOG -Append -Encoding utf8
+      "`n[$ts] [mini_update] start" | Out-File -FilePath $LOG -Append -Encoding utf8
       Run-Once
-      "`n[$(Get-Date -Format o)] [fetch_features] done" | Out-File -FilePath $LOG -Append -Encoding utf8
+      "`n[$(Get-Date -Format o)] [mini_update] done" | Out-File -FilePath $LOG -Append -Encoding utf8
       Release-Lock
     } else {
-      "`n[$ts] [fetch_features] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
+      "`n[$ts] [mini_update] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
     }
   }catch{
     "[ERROR] $($_|Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
     Release-Lock
   }
-  Start-Sleep -Seconds 600
+  # co 6 godzin
+  Start-Sleep -Seconds (6*3600)
 }
