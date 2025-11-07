@@ -1,10 +1,9 @@
-
-[2025-11-08T00:30:00.5177773+01:00] [nightly_train] start
-[ERROR] python.exe : Traceback (most recent call last):
-At C:\xau_rl\ops\daemon_nightly_train.ps1:11 char:3
-+   & $PY "rl\train_ppo.py" "--timesteps" "1500000" *>> $LOG
-+   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: (Traceback (most recent call last)::String) [], Remote 
-   Exception
-    + FullyQualifiedErrorId : NativeCommandError
- 
+daemon_calibration_biweekly
+daemon_cleanup
+daemon_daily_report
+daemon_feature_discovery
+daemon_fetch_features
+daemon_mini_update
+daemon_nightly_report
+daemon_nightly_train
+daemon_te_calendar
