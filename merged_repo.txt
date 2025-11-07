@@ -1,45 +1,38 @@
-# encoding: utf-8
-$ErrorActionPreference="Stop"
-
-$REPO="C:\xau_rl"; $PY="$REPO\.venv\Scripts\python.exe"
-$LOG ="$REPO\logs\services\mini_update_ppo.log"
-$LOCK="$REPO\logs\services\mini_update_ppo.lock"
-
-New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null
-Set-Location $REPO
-
-# Pierwsza linia w logu (jak u Ciebie)
-if(-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0){
-  "[$(Get-Date -Format o)] [mini_update] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
-}
-
-function Acquire-Lock {
-  if(Test-Path $LOCK){ $false } else { New-Item -ItemType File -Path $LOCK -Force | Out-Null; $true }
-}
-function Release-Lock {
-  if(Test-Path $LOCK){ Remove-Item $LOCK -Force }
-}
-
-function Run-Once {
-  # dokładnie ten sam mechanizm redirekcji co w fetch_features (all-streams)
-  & $PY -u "ops\mini_update_ppo.py" "--timesteps" "300000" *>> $LOG
-}
-
-while($true){
-  $ts=Get-Date -Format o
-  try{
-    if(Acquire-Lock){
-      "`n[$ts] [mini_update] start" | Out-File -FilePath $LOG -Append -Encoding utf8
-      Run-Once
-      "`n[$(Get-Date -Format o)] [mini_update] done" | Out-File -FilePath $LOG -Append -Encoding utf8
-      Release-Lock
-    } else {
-      "`n[$ts] [mini_update] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
-    }
-  }catch{
-    "[ERROR] $($_|Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
-    Release-Lock
-  }
-  # co 6 godzin
-  Start-Sleep -Seconds (6*3600)
-}
+[2025-11-07T17:03:42.9170353+01:00] [mini_update] start
+[ m i n i _ u p d a t e ]   f e a t u r e s _ c s v = d a t a / X A U U S D _ M 5 _ f e a t u r e s . c s v 
+ 
+ [ m i n i _ u p d a t e ]   d f   r o w s = 2 6 4     f r o m = 2 0 2 5 - 1 1 - 0 6   1 5 : 5 5 : 0 0     t o = 2 0 2 5 - 1 1 - 0 7   1 4 : 5 5 : 0 0 
+ 
+ [ m i n i _ u p d a t e ]   r a n g e s :   t r a i n _ s t a r t = 2 0 2 5 - 0 6 - 1 0   1 4 : 5 5 : 0 0     v a l _ s t a r t = 2 0 2 5 - 1 0 - 0 8   1 4 : 5 5 : 0 0     v a l _ e n d = 2 0 2 5 - 1 1 - 0 7   1 4 : 5 5 : 0 0 
+ 
+ [ m i n i _ u p d a t e ]   c o u n t s :   t r a i n = 0     v a l = 2 6 4     ( W I N D O W = 1 2 8 ) 
+ 
+ [ m i n i _ u p d a t e ] [ f a l l b a c k - t i g h t ]   t r a i n = 1 3 1 ,   v a l = 1 3 3 
+ 
+ [ m i n i _ u p d a t e ]   T r a i n i n g   o n   1 3 1   r o w s   ( ~ 1 2 0 d ) ,   t i m e s t e p s = 3 0 0 0 0 0 
+ 
+ [ m i n i _ u p d a t e ]   f e a t u r e s _ s p e c :   u s i n g   i n t e r s e c t i o n :   a v a i l = 1 9 ,   m i s s i n g = 7 7   ( i g n o r e d ) 
+ 
+ U s i n g   c p u   d e v i c e 
+ 
+ L o g g i n g   t o   l o g s / p p o _ g o l d _ m 5 \ P P O _ 1 2 3 
+ 
+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+ 
+ |   r o l l o u t /                       |                     | 
+ 
+ |         e p _ l e n _ m e a n           |   2                 | 
+ 
+ |         e p _ r e w _ m e a n           |   0                 | 
+ 
+ |   t i m e /                             |                     | 
+ 
+ |         f p s                           |   2 1 6             | 
+ 
+ |         i t e r a t i o n s             |   1                 | 
+ 
+ |         t i m e _ e l a p s e d         |   1 8               | 
+ 
+ |         t o t a l _ t i m e s t e p s   |   4 0 9 6           | 
+ 
+ - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
