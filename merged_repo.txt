@@ -1,62 +1,35 @@
-# encoding: utf-8
-$ErrorActionPreference = "Stop"
-
-$REPO = "C:\xau_rl"
-$PY   = "$REPO\.venv\Scripts\python.exe"
-
-$LOG  = "$REPO\logs\services\nightly_report.log"
-$LOCK = "$REPO\logs\services\nightly_report.lock"
-
-New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null
-Set-Location $REPO
-
-# Pierwszy wpis w logu (Add-Content, nie Out-File)
-if (-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0) {
-  "[$(Get-Date -Format o)] [nightly_report] bootstrap_alive" | Add-Content -LiteralPath $LOG -Encoding UTF8
+$ErrorActionPreference="Stop"
+$REPO="C:\xau_rl"; $PY="$REPO\.venv\Scripts\python.exe"
+$LOG="$REPO\logs\services\feature_discovery.log"; $LOCK="$REPO\logs\services\feature_discovery.lock"
+New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null; Set-Location $REPO
+if(-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0){
+  "[$(Get-Date -Format o)] [feature_discovery] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
 }
-
-function Acquire-Lock {
-  if (Test-Path $LOCK) {
-    $false
-  } else {
-    New-Item -ItemType File -Path $LOCK -Force | Out-Null
-    $true
-  }
-}
-
-function Release-Lock {
-  if (Test-Path $LOCK) { Remove-Item $LOCK -Force }
-}
-
-function Run-Once {
-  # UWAGA: prawdziwe operatory redirekcji (bez encji HTML)
-  & $PY "rl\evaluate.py" "--out_dir" "reports" *>> $LOG
-  & $PY "utils\make_report.py"                 *>> $LOG
-}
-
-function Seconds-To-Next-2300 {
+function Acquire-Lock { if(Test-Path $LOCK){$false}else{New-Item -ItemType File -Path $LOCK -Force|Out-Null;$true} }
+function Release-Lock { if(Test-Path $LOCK){Remove-Item $LOCK -Force} }
+function Run-Once { & $PY "ops\feature_discovery_weekly.py" "--topK" "96" "--change_frac" "0.10" *>> $LOG }
+function Seconds-To-Next-21 {
   $now = Get-Date
-  $target = [DateTime]::Today.AddHours(23)
+  $target = [DateTime]::Today.AddHours(21)
   if ($now -ge $target) { $target = $target.AddDays(1) }
-  $diff = $target - $now
-  return ([int]$diff.TotalSeconds)
+  $diff = $target - $now            # TimeSpan
+  return ([int]$diff.TotalSeconds)  # zwracamy liczbę sekund (int)
 }
-
-while ($true) {
-  Start-Sleep -Seconds (Seconds-To-Next-2300)
-  $ts = Get-Date -Format o
-  try {
-    if (Acquire-Lock) {
-      "`n[$ts] [nightly_report] start" | Add-Content -LiteralPath $LOG -Encoding UTF8
+while($true){
+  Start-Sleep -Seconds (Seconds-To-Next-21)
+  $ts=Get-Date -Format o
+  try{
+    if(Acquire-Lock){
+      "`n[$ts] [feature_discovery] start" | Out-File -FilePath $LOG -Append -Encoding utf8
       Run-Once
-      "`n[$(Get-Date -Format o)] [nightly_report] done" | Add-Content -LiteralPath $LOG -Encoding UTF8
+      "`n[$(Get-Date -Format o)] [feature_discovery] done" | Out-File -FilePath $LOG -Append -Encoding utf8
       Release-Lock
     } else {
-      "`n[$ts] [nightly_report] skipped (locked)" | Add-Content -LiteralPath $LOG -Encoding UTF8
+      "`n[$ts] [feature_discovery] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
     }
   } catch {
-    "[ERROR] $($_ | Out-String)" | Add-Content -LiteralPath $LOG -Encoding UTF8
+    "[ERROR] $($_|Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
     Release-Lock
   }
-  Start-Sleep -Seconds (24*3600 - 60)
+  Start-Sleep -Seconds (3*24*3600 - 60)
 }
