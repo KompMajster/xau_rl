@@ -2,21 +2,20 @@
 # -*- coding: utf-8 -*-
 """
 Feature Discovery (dziennie) dla XAUUSD M5:
- - Czyta cechy z config.yaml -> files.features_csv,
- - (Opcjonalnie) dołącza fundamenty i kalendarz (FRED/GPR/COT/Event),
- - Tworzy lagi (--max_lag) w sposób blokowy (bez fragmentacji DataFrame),
- - Rankuje cechy po |Spearman| do targetu 1-krok do przodu, z pominięciem
-   kolumn stałych i zbyt krótkich (eliminuje ConstantInputWarning),
- - Dywersyfikacja: kara za częste użycie + min. udział nowych (--change_frac),
- - Zapisuje:
-     * models/features_spec.json
-     * models/features_spec_history.jsonl (append)
-     * reports/feature_discovery_rank.csv
-     * reports/feature_discovery_summary.txt
-     * logs/feature_discovery.log
-
+- Czyta cechy z config.yaml -> files.features_csv,
+- (Opcjonalnie) dołącza fundamenty i kalendarz (FRED/GPR/COT/Event),
+- Tworzy lagi (--max_lag) w sposób blokowy (bez fragmentacji DataFrame),
+- Rankuje cechy po Spearman do targetu 1-krok do przodu, z pominięciem
+  kolumn stałych i zbyt krótkich (eliminuje ConstantInputWarning),
+- Dywersyfikacja: kara za częste użycie + min. udział nowych (--change_frac),
+- Zapisuje:
+  * models/features_spec.json
+  * models/features_spec_history.jsonl (append)
+  * reports/feature_discovery_rank.csv
+  * reports/feature_discovery_summary.txt
+  * logs/feature_discovery.log
 Uruchamiaj jako skrypt (nie jako moduł):
-  .\.venv\Scripts\python.exe ops\feature_discovery_weekly.py --topK 96 --max_lag 3 --change_frac 0.10 --out models\features_spec.json
+ .\\.venv\\Scripts\\python.exe ops\\feature_discovery_weekly.py --topK 96 --max_lag 3 --change_frac 0.10 --out models\\features_spec.json
 """
 
 import argparse, os, json, traceback
@@ -26,39 +25,30 @@ import numpy as np
 import yaml
 from datetime import datetime
 
-# -----------------------------------------------------------
-# USTAWIENIA I ŚCIEŻKI
-# -----------------------------------------------------------
+# === ŚCIEŻKI ===
 ROOT = Path(__file__).resolve().parents[1]
 os.chdir(ROOT)
-
 LOG_DIR = ROOT / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG = LOG_DIR / "feature_discovery.log"
-
 HIST_PATH = ROOT / "models" / "features_spec_history.jsonl"
 SUMMARY_PATH = ROOT / "reports" / "feature_discovery_summary.txt"
 RANK_PATH = ROOT / "reports" / "feature_discovery_rank.csv"
 
-# Dywersyfikacja (domyślne; można nadpisać --change_frac)
-MIN_NEW_RATIO   = 0.20     # minimalny udział nowych cech (0..1)
-HIST_WINDOW     = 6        # okno historii wyborów (ostatnie N dni)
-REPEAT_PENALTY  = 0.90     # score *= 0.90^freq w oknie historii
-
-# Minimalna liczba obserwacji do liczenia korelacji
+# Parametry
+MIN_NEW_RATIO = 0.20
+HIST_WINDOW = 6
+REPEAT_PENALTY = 0.90
 MIN_OBS = 200
-
-# TWARDY KLUCZ FRED (na Twoim prywatnym hoście OK)
 FRED_API_KEY_HARDCODED = "404d32dffe691fd6159eed5cceb44e80"
 
-# -----------------------------------------------------------
-# POMOCNICZE
-# -----------------------------------------------------------
+# === LOGOWANIE ===
 def log(msg: str):
     ts = datetime.now().isoformat(timespec="seconds")
     with open(LOG, "a", encoding="utf-8") as f:
         f.write(f"[{ts}] {msg}\n")
 
+# === FUNKCJE ===
 def load_cfg():
     with open(ROOT / "config.yaml", "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -71,15 +61,14 @@ def read_features_csv(cfg):
     return df.sort_values("time").reset_index(drop=True)
 
 def safe_merge_on_time(df_base: pd.DataFrame, df_right: pd.DataFrame, col_map: dict):
-    """Resample prawej tabeli do 1min + ffill i merge_asof backward (tolerancja 10min)."""
     if df_right is None or df_right.empty:
         return df_base
     r = df_right.copy()
     if "time" not in r.columns:
         raise ValueError("Right dataframe has no 'time'")
     r = (r.sort_values("time").drop_duplicates("time")
-           .set_index("time").asfreq("1min").ffill()
-           .reset_index().rename(columns=col_map))
+         .set_index("time").asfreq("1min").ffill()
+         .reset_index().rename(columns=col_map))
     out = pd.merge_asof(
         df_base.sort_values("time"),
         r.sort_values("time"),
@@ -90,7 +79,6 @@ def safe_merge_on_time(df_base: pd.DataFrame, df_right: pd.DataFrame, col_map: d
     return out
 
 def try_load_fred(series_id: str):
-    """Najpierw fredapi z wpisanym kluczem; jeśli nie zadziała -> CSV fallback: external/fred/{series}.csv (kolumny: date,value)."""
     if not series_id:
         return None
     try:
@@ -103,16 +91,15 @@ def try_load_fred(series_id: str):
         return df
     except Exception as e:
         log(f"[warn] FRED api unavailable ({e}); trying CSV fallback")
-
-    csv_p = ROOT / "external" / "fred" / f"{series_id}.csv"
-    if csv_p.exists():
-        df = pd.read_csv(csv_p)
-        col_time = "time" if "time" in df.columns else ("date" if "date" in df.columns else None)
-        if not col_time or "value" not in df.columns:
-            raise RuntimeError(f"FRED CSV malformed: {csv_p.as_posix()}")
-        df[col_time] = pd.to_datetime(df[col_time], utc=True)
-        df = df.rename(columns={col_time: "time", "value": series_id})
-        return df
+        csv_p = ROOT / "external" / "fred" / f"{series_id}.csv"
+        if csv_p.exists():
+            df = pd.read_csv(csv_p)
+            col_time = "time" if "time" in df.columns else ("date" if "date" in df.columns else None)
+            if not col_time or "value" not in df.columns:
+                raise RuntimeError(f"FRED CSV malformed: {csv_p.as_posix()}")
+            df[col_time] = pd.to_datetime(df[col_time], utc=True)
+            df = df.rename(columns={col_time: "time", "value": series_id})
+            return df
     return None
 
 def try_load_simple_csv(p: Path, time_col="time"):
@@ -130,40 +117,24 @@ def try_load_simple_csv(p: Path, time_col="time"):
     return df.rename(columns={time_col: "time"})
 
 def build_target(df: pd.DataFrame, price_col="close", horizon=1):
-    """Target: 1-krok do przodu na proc. zmianie ceny (return)."""
     return df[price_col].pct_change().shift(-horizon).rename("target_fwd1")
 
 def add_lags(df: pd.DataFrame, cols: list, max_lag: int) -> pd.DataFrame:
-    """
-    Tworzy lagi blokowo, bez fragmentacji DataFrame:
-    concat([df, block_lag1, block_lag2, ...], axis=1).
-    """
     if max_lag <= 0 or not cols:
         return df
-
     lag_blocks = []
     for L in range(1, max_lag + 1):
         blk = df[cols].shift(L)
         blk.columns = [f"{c}_lag{L}" for c in cols]
         lag_blocks.append(blk)
-
     out = pd.concat([df] + lag_blocks, axis=1, copy=False)
-    # opcjonalna "defragmentacja": out = out.copy()
     return out
 
 def score_features(df: pd.DataFrame, feature_cols: list, target_col="target_fwd1"):
-    """
-    Ranking po |Spearman|. Pomija:
-      - kolumny o zbyt małej liczbie obserwacji (n < MIN_OBS),
-      - kolumny stałe (nunique <= 1 po odfiltrowaniu NaN),
-      - przypadki, gdzie target w aktualnym masku jest stały.
-    """
     scores = []
     y_full = df[target_col].astype(float)
-
     skipped_constant = []
     skipped_small = []
-
     for c in feature_cols:
         try:
             x_full = df[c].astype(float)
@@ -172,28 +143,20 @@ def score_features(df: pd.DataFrame, feature_cols: list, target_col="target_fwd1
             if n < MIN_OBS:
                 skipped_small.append(c)
                 continue
-
             x = x_full[ok]
             y = y_full[ok]
-
-            # pomiń stałe wektory (po filtrze ok)
             if x.nunique(dropna=True) <= 1 or y.nunique(dropna=True) <= 1:
                 skipped_constant.append(c)
                 continue
-
             rho = x.corr(y, method="spearman")
             if pd.notna(rho):
                 scores.append((c, float(abs(rho))))
         except Exception:
-            # cichy skip – jeśli chcesz, dodaj log tu
             continue
-
-    # log informacyjny
     if skipped_small:
         log(f"[info] skipped_small_n<{MIN_OBS}: {len(skipped_small)} cols")
     if skipped_constant:
         log(f"[info] skipped_constant: {len(skipped_constant)} cols (e.g. {skipped_constant[:5]})")
-
     scores.sort(key=lambda t: t[1], reverse=True)
     return pd.DataFrame(scores, columns=["feature", "abs_spearman"])
 
@@ -220,7 +183,6 @@ def jaccard(a: set, b: set) -> float:
     return len(a & b) / max(1, len(a | b))
 
 def apply_repeat_penalty(rank_df: pd.DataFrame, hist_rows: list):
-    """Obniża score cech, które często pojawiały się w historii: score *= REPEAT_PENALTY ** freq."""
     if not hist_rows or rank_df.empty:
         return rank_df.copy()
     freq = {}
@@ -235,33 +197,25 @@ def apply_repeat_penalty(rank_df: pd.DataFrame, hist_rows: list):
     return out
 
 def diversify_select(adjusted_rank: pd.DataFrame, prev_features: list, topK: int, min_new_ratio=MIN_NEW_RATIO):
-    """Wybór topK tak, by >= min_new_ratio było nowych vs poprzedni wybór."""
     prev_set = set(prev_features or [])
     new_needed = int(np.ceil(topK * min_new_ratio))
     chosen = []
-
-    # Najpierw zbierz "nowe" cechy z góry rankingu
     for _, row in adjusted_rank.iterrows():
         f = row["feature"]
         if f not in prev_set and f not in chosen:
             chosen.append(f)
-            if len([c for c in chosen if c not in prev_set]) >= new_needed:
-                break
-
-    # Dopełnij najlepszymi (mogą być już znane)
+        if len([c for c in chosen if c not in prev_set]) >= new_needed:
+            break
     if len(chosen) < topK:
         for _, row in adjusted_rank.iterrows():
             f = row["feature"]
             if f not in chosen:
                 chosen.append(f)
-                if len(chosen) >= topK:
-                    break
-
+            if len(chosen) >= topK:
+                break
     return chosen[:topK]
 
-# -----------------------------------------------------------
-# GŁÓWNA LOGIKA
-# -----------------------------------------------------------
+# === MAIN ===
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--topK", type=int, default=96)
@@ -271,127 +225,88 @@ def main():
                     help="Minimalny udział nowych cech [0..1] względem poprzedniego wyboru")
     args = ap.parse_args()
 
-    # Ewentualne nadpisanie progu nowych cech
     global MIN_NEW_RATIO
     if args.change_frac is not None:
         MIN_NEW_RATIO = float(np.clip(args.change_frac, 0.0, 1.0))
 
-    log("feature_discovery bootstrap_alive")
-    cfg = load_cfg()
-    log("start")
-
-    # 1) Wczytaj cechy techniczne (z generatora features)
-    df = read_features_csv(cfg)
-
-    # 2) Zbuduj target
-    price_col = "close_norm" if "close_norm" in df.columns else "close"
-    df["target_fwd1"] = build_target(df, price_col=price_col)
-
-    # 3) Dołącz fundamenty i kalendarz (opcjonalnie; bez crasha)
     try:
-        fcfg = (cfg.get("fundamentals") or {})
-        usd_id = fcfg.get("usd_series_id", None)   # np. DTWEXBGS
-        fred_df = try_load_fred(usd_id) if usd_id else None
-        if fred_df is not None:
-            df = safe_merge_on_time(df, fred_df, {usd_id: f"fred_{usd_id}"})
-            # prosta standaryzacja w długim oknie
-            col = f"fred_{usd_id}"
-            mu = df[col].rolling(5000, min_periods=100).mean()
-            sd = df[col].rolling(5000, min_periods=100).std().replace(0, np.nan)
-            df[col] = (df[col] - mu) / (sd + 1e-8)
-        else:
-            log("[info] FRED series not attached (no api/csv)")
+        log("feature_discovery bootstrap_alive")
+        cfg = load_cfg()
+        log("start")
 
-        gpr_p = fcfg.get("gpr_csv", None)
-        cot_p = fcfg.get("cot_csv", None)
-        cal_cfg = (cfg.get("calendar") or {})
-        cal_p = cal_cfg.get("calendar_csv", None)
+        df = read_features_csv(cfg)
+        price_col = "close_norm" if "close_norm" in df.columns else "close"
+        df["target_fwd1"] = build_target(df, price_col=price_col)
 
-        gpr = try_load_simple_csv(ROOT / gpr_p) if gpr_p else None
-        if gpr is not None:
-            vcols = [c for c in gpr.columns if c != "time"]
-            if vcols:
-                gpr = gpr[["time", vcols[0]]].rename(columns={vcols[0]: "gpr"})
-                df = safe_merge_on_time(df, gpr, {"gpr": "gpr"})
+        # Fundamenty i kalendarz
+        try:
+            fcfg = (cfg.get("fundamentals") or {})
+            usd_id = fcfg.get("usd_series_id", None)
+            fred_df = try_load_fred(usd_id) if usd_id else None
+            if fred_df is not None:
+                df = safe_merge_on_time(df, fred_df, {usd_id: f"fred_{usd_id}"})
+                col = f"fred_{usd_id}"
+                mu = df[col].rolling(5000, min_periods=100).mean()
+                sd = df[col].rolling(5000, min_periods=100).std().replace(0, np.nan)
+                df[col] = (df[col] - mu) / (sd + 1e-8)
+            else:
+                log("[info] FRED series not attached (no api/csv)")
+        except Exception as e:
+            log(f"[warn] fundamentals/calendar attach failed: {e}")
 
-        cot = try_load_simple_csv(ROOT / cot_p) if cot_p else None
-        if cot is not None:
-            vcols = [c for c in cot.columns if c != "time"]
-            if vcols:
-                cot = cot[["time", vcols[0]]].rename(columns={vcols[0]: "cot"})
-                df = safe_merge_on_time(df, cot, {"cot": "cot"})
+        base_cols = ["time", "open", "high", "low", "close", "tick_volume", "spread"]
+        all_cols = [c for c in df.columns if c not in base_cols + ["target_fwd1"]]
+        df = add_lags(df, all_cols, max_lag=args.max_lag)
+        cand_cols = [c for c in df.columns if c not in base_cols + ["target_fwd1"]]
 
-        cal = try_load_simple_csv(ROOT / cal_p) if cal_p else None
-        if cal is not None:
-            cal["event_flag"] = 1
-            df = safe_merge_on_time(df, cal[["time", "event_flag"]], {"event_flag": "us_event"})
-    except Exception as e:
-        log(f"[warn] fundamentals/calendar attach failed: {e}")
+        rank = score_features(df, cand_cols, target_col="target_fwd1")
+        if rank.empty:
+            raise RuntimeError("Ranking pusty – brak danych do selekcji.")
 
-    # 4) Przygotuj kandydatów + lags
-    base_cols = ["time","open","high","low","close","tick_volume","spread"]
-    all_cols = [c for c in df.columns if c not in base_cols + ["target_fwd1"]]
-    df = add_lags(df, all_cols, max_lag=args.max_lag)
+        hist_rows = load_history(HIST_WINDOW)
+        prev_feats = hist_rows[-1]["feature_columns"] if hist_rows else []
+        rank_adj = apply_repeat_penalty(rank, hist_rows)
 
-    cand_cols = [c for c in df.columns if c not in base_cols + ["target_fwd1"]]
-    rank = score_features(df, cand_cols, target_col="target_fwd1")
-    if rank.empty:
-        raise RuntimeError("Ranking pusty – brak danych do selekcji.")
+        out_rank = rank_adj.assign(prev_used=lambda x: x["feature"].isin(prev_feats))
+        RANK_PATH.parent.mkdir(parents=True, exist_ok=True)
+        out_rank.to_csv(RANK_PATH, index=False)
 
-    # 5) Historia i kara za powtarzanie
-    hist_rows = load_history(HIST_WINDOW)
-    prev_feats = hist_rows[-1]["feature_columns"] if hist_rows else []
-    rank_adj = apply_repeat_penalty(rank, hist_rows)
+        topK = max(int(args.topK), 8)
+        chosen = diversify_select(rank_adj, prev_feats, topK, MIN_NEW_RATIO)
 
-    # Zapis rankingu (z kolumnami pomocniczymi)
-    out_rank = rank_adj.assign(prev_used=lambda x: x["feature"].isin(prev_feats))
-    RANK_PATH.parent.mkdir(parents=True, exist_ok=True)
-    out_rank.to_csv(RANK_PATH, index=False)
+        spec = {
+            "feature_columns": chosen,
+            "price_column": "close_norm" if "close_norm" in df.columns else "close",
+            "generated_at": datetime.now().isoformat(timespec="seconds")
+        }
+        out_p = ROOT / args.out
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+        out_p.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
+        save_history({"ts": datetime.now().isoformat(timespec="seconds"), "feature_columns": chosen})
 
-    # 6) Wybór z minimalnym udziałem nowych cech
-    topK = max(int(args.topK), 8)
-    chosen = diversify_select(rank_adj, prev_feats, topK, MIN_NEW_RATIO)
+        prev_set = set(prev_feats or [])
+        cur_set = set(chosen or [])
+        jac = jaccard(prev_set, cur_set)
+        chg = len(cur_set - prev_set)
+        kept = len(cur_set & prev_set)
+        SUMMARY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(SUMMARY_PATH, "w", encoding="utf-8") as f:
+            f.write("# Feature Discovery Summary\n")
+            f.write(f"Generated at: {datetime.now().isoformat(timespec='seconds')}\n")
+            f.write(f"TopK: {topK}\n")
+            f.write(f"Prev size: {len(prev_set)}, Cur size: {len(cur_set)}\n")
+            f.write(f"Jaccard(prev,cur): {jac:.3f}\n")
+            f.write(f"Kept from prev: {kept}\n")
+            f.write(f"New vs prev: {chg}\n")
+            f.write(f"Min new ratio enforced: {MIN_NEW_RATIO:.2f}\n")
 
-    # 7) Zapis spec + historia
-    spec = {
-        "feature_columns": chosen,
-        "price_column": "close_norm" if "close_norm" in df.columns else "close",
-        "generated_at": datetime.now().isoformat(timespec="seconds")
-    }
-    out_p = ROOT / args.out
-    out_p.parent.mkdir(parents=True, exist_ok=True)
-    out_p.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
+        log(f"saved spec -> {out_p.as_posix()}, rank -> {RANK_PATH.as_posix()}, summary -> {SUMMARY_PATH.as_posix()}")
+        print("Feature discovery completed.")
 
-    save_history({
-        "ts": datetime.now().isoformat(timespec="seconds"),
-        "feature_columns": chosen
-    })
-
-    # 8) Raport (Jaccard, ile nowych itd.)
-    prev_set = set(prev_feats or [])
-    cur_set = set(chosen or [])
-    jac = jaccard(prev_set, cur_set)
-    chg = len(cur_set - prev_set)
-    kept = len(cur_set & prev_set)
-    SUMMARY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(SUMMARY_PATH, "w", encoding="utf-8") as f:
-        f.write("# Feature Discovery Summary\n")
-        f.write(f"Generated at: {datetime.now().isoformat(timespec='seconds')}\n")
-        f.write(f"TopK: {topK}\n")
-        f.write(f"Prev size: {len(prev_set)}, Cur size: {len(cur_set)}\n")
-        f.write(f"Jaccard(prev,cur): {jac:.3f}  (1.0 = identyczne, 0.0 = zupełnie różne)\n")
-        f.write(f"Kept from prev: {kept}\n")
-        f.write(f"New vs prev:   {chg}\n")
-        f.write(f"Min new ratio enforced: {MIN_NEW_RATIO:.2f}\n")
-
-    log(f"saved spec -> {out_p.as_posix()}, rank -> {RANK_PATH.as_posix()}, summary -> {SUMMARY_PATH.as_posix()}")
-    print("Feature discovery completed.")
-
-# -----------------------------------------------------------
-if __name__ == "__main__":
-    try:
-        main()
     except Exception as e:
         log(f"[ERROR] {e}")
         log(traceback.format_exc())
         raise
+
+if __name__ == "__main__":
+    main()
