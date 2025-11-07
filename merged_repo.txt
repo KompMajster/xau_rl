@@ -1,16 +1,35 @@
+# encoding: utf-8
 $ErrorActionPreference="Stop"
+
 $REPO="C:\xau_rl"; $PY="$REPO\.venv\Scripts\python.exe"
 $LOG="$REPO\logs\services\nightly_report.log"; $LOCK="$REPO\logs\services\nightly_report.lock"
-New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null; Set-Location $REPO
-if(-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0){
-  "[$(Get-Date -Format o)] [nightly_report] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
+
+New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null
+Set-Location $REPO
+
+# Pierwszy wpis w logu (użyj Add-Content, aby nie blokować pliku)
+if (-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0) {
+  "[$(Get-Date -Format o)] [nightly_report] bootstrap_alive" | Add-Content -LiteralPath $LOG -Encoding UTF8
 }
-function Acquire-Lock { if(Test-Path $LOCK){$false}else{New-Item -ItemType File -Path $LOCK -Force|Out-Null;$true} }
-function Release-Lock { if(Test-Path $LOCK){Remove-Item $LOCK -Force} }
+
+function Acquire-Lock {
+  if (Test-Path $LOCK) {
+    $false
+  } else {
+    New-Item -ItemType File -Path $LOCK -Force | Out-Null
+    $true
+  }
+}
+function Release-Lock {
+  if (Test-Path $LOCK) { Remove-Item $LOCK -Force }
+}
+
 function Run-Once {
+  # UWAGA: prawdziwe operatorzy redirekcji (bez encji HTML)
   & $PY "rl\evaluate.py" "--out_dir" "reports" *>> $LOG
   & $PY "utils\make_report.py"                 *>> $LOG
 }
+
 function Seconds-To-Next-2300 {
   $now = Get-Date
   $target = [DateTime]::Today.AddHours(23)
@@ -18,20 +37,21 @@ function Seconds-To-Next-2300 {
   $diff = $target - $now
   return ([int]$diff.TotalSeconds)
 }
-while($true){
+
+while ($true) {
   Start-Sleep -Seconds (Seconds-To-Next-2300)
-  $ts=Get-Date -Format o
-  try{
-    if(Acquire-Lock){
-      "`n[$ts] [nightly_report] start" | Out-File -FilePath $LOG -Append -Encoding utf8
+  $ts = Get-Date -Format o
+  try {
+    if (Acquire-Lock) {
+      "`n[$ts] [nightly_report] start" | Add-Content -LiteralPath $LOG -Encoding UTF8
       Run-Once
-      "`n[$(Get-Date -Format o)] [nightly_report] done"  | Out-File -FilePath $LOG -Append -Encoding utf8
+      "`n[$(Get-Date -Format o)] [nightly_report] done" | Add-Content -LiteralPath $LOG -Encoding UTF8
       Release-Lock
     } else {
-      "`n[$ts] [nightly_report] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
+      "`n[$ts] [nightly_report] skipped (locked)" | Add-Content -LiteralPath $LOG -Encoding UTF8
     }
   } catch {
-    "[ERROR] $($_|Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
+    "[ERROR] $($_ | Out-String)" | Add-Content -LiteralPath $LOG -Encoding UTF8
     Release-Lock
   }
   Start-Sleep -Seconds (24*3600 - 60)
