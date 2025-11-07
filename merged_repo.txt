@@ -1,3 +1,18 @@
+chyba mam problem z odpaleniem tego skryptu
+(.venv) PS C:\xau_rl> python -m manually
+Traceback (most recent call last):
+  File "<frozen runpy>", line 189, in _run_module_as_main
+  File "<frozen runpy>", line 159, in _get_module_details
+  File "<frozen importlib._bootstrap_external>", line 1160, in get_code
+  File "<frozen importlib._bootstrap_external>", line 1090, in source_to_code
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "C:\xau_rl\manually.py", line 9
+    python -m ops.mini_update_ppo --timesteps 300000 --train_days 120 --val_days 30 --seed 42
+              ^^^
+SyntaxError: invalid syntax
+
+a tutaj log z featch_features
+
 2025-11-07T15:53:56.0985129+01:00] [fetch_features] start
 [ M T 5 ]   C o m p a n y = M e t a Q u o t e s   L t d .   |   T e r m i n a l N a m e = M e t a T r a d e r   5   |   L o g i n = 6 2 7 1 9 0 2 5   |   S e r v e r = O A N D A T M S - M T 5   |   A c c o u n t N a m e = P L / M 6 2 7 1 9 0 2 5 / P L N 
  
@@ -28,14 +43,3 @@
  S a v e d   f e a t u r e s   - >   d a t a / X A U U S D _ M 5 _ f e a t u r e s . c s v   ( r o w s = 2 6 3 ,   c o l s = 7 9 ) 
  
 
-# 1) Krótki podgląd zakresu cech
-python - << 'PY'
-import pandas as pd
-df = pd.read_csv("data/XAUUSD_M5_features.csv", parse_dates=["time"]).sort_values("time")
-print("features: rows=", len(df), "from:", df["time"].min(), "to:", df["time"].max())
-cut = df["time"].max() - pd.Timedelta(days=120)
-print("last120d rows:", (df["time"]>=cut).sum())
-PY
-
-# 2) Teraz mini_update "wprost", bez pętli
-python ops\mini_update_ppo.py --timesteps 300000 --train_days 120 --val_days 30 --seed 42
