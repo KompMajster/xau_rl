@@ -1,4 +1,1 @@
-
-import pandas as pd
-f = pd.read_csv("data/XAUUSD_M5_features.csv", parse_dates=["time"]).sort_values("time")
-print("FEAT:", len(f), f["time"].min(), "->", f["time"].max())
+FEAT: 12180 2025-09-08 02:00:00+00:00 -> 2025-11-07 15:35:00+00:00FEAT: 12180 2025-09-08 02:00:00+00:00 -> 2025-11-07 15:35:00+00:00
