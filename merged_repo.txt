@@ -1,14 +1,87 @@
-# ------------------------ features_spec ------------------------
-features_spec = None
-fspec = Path("models/features_spec.json")
-if fspec.exists():
-    try:
-        raw = json.loads(fspec.read_text(encoding="utf-8")).get("feature_columns", None)
-    except Exception:
-        raw = None
-    if raw:
-        avail = [c for c in raw if c in df.columns]
-        missing = [c for c in raw if c not in df.columns]
-        if missing:
-            print(f"[mini_update] features_spec: using intersection: avail={len(avail)}, missing={len(missing)} (ignored)", flush=True)
-        features_spec = avail if len(avail) > 0 else None
+# encoding: utf-8
+$ErrorActionPreference = "Stop"
+
+# ==== KONFIG ====
+$REPO = "C:\xau_rl"
+$PY   = Join-Path $REPO ".venv\Scripts\python.exe"
+$LogDir = Join-Path $REPO "logs\services"
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+
+# Unikalny log per uruchomienie (łatwiejszy debugging)
+$STAMP = Get-Date -Format "yyyyMMdd_HHmmss"
+$LOG   = Join-Path $LogDir "mini_update_ppo_$STAMP.log"
+$LOCK  = Join-Path $LogDir "mini_update_ppo.lock"
+
+# Wersja PS, PATH i istnienie Pythona – na początku logu
+Start-Transcript -Path $LOG -Append -Force
+Write-Host "[daemon] PSVersion=$($PSVersionTable.PSVersion) PATH=$env:PATH"
+Write-Host "[daemon] REPO=$REPO  PY exists? $(Test-Path -LiteralPath $PY)"
+
+# Katalog roboczy repo
+Set-Location $REPO
+
+# Zapas: jeżeli brak .venv/python.exe, spróbuj 'python' z PATH
+if (-not (Test-Path -LiteralPath $PY)) { $PY = "python" }
+
+# ---- LOCK na uchwycie (żeby nie startować równolegle) ----
+$script:LockHandle = $null
+function Acquire-Lock {
+    try {
+        $script:LockHandle = [System.IO.File]::Open(
+            $LOCK,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+        return $true
+    } catch {
+        return $false
+    }
+}
+function Release-Lock {
+    try {
+        if ($script:LockHandle) { $script:LockHandle.Close(); $script:LockHandle.Dispose(); $script:LockHandle = $null }
+    } catch {}
+    try { Remove-Item $LOCK -Force -ErrorAction SilentlyContinue } catch {}
+}
+
+# Jednorazowe uruchomienie mini_update
+function Run-Once {
+    Write-Host "[daemon] [$(Get-Date -Format o)] [mini_update] start"
+
+    # STDOUT i STDERR do tego samego logu (bez *>>)
+    & $PY -u "ops\mini_update_ppo.py" "--timesteps" "300000" >> $LOG 2>>&1
+
+    $code = $LASTEXITCODE
+    Write-Host "[daemon] [$(Get-Date -Format o)] [mini_update] exit_code=$code"
+    if ($code -ne 0) { throw "mini_update failed with exit_code=$code (see $LOG)" }
+
+    Write-Host "[daemon] [$(Get-Date -Format o)] [mini_update] done"
+}
+
+# Globalny trap – zawsze oddaj lock i nie dopuszczaj do „karuzeli”
+trap {
+    try { Write-Host "[daemon][ERROR] $($_.Exception.Message)`n$($_ | Out-String)" } catch {}
+    Release-Lock
+    Start-Sleep -Seconds 10
+    continue
+}
+
+# Pętla co 6 godzin
+while ($true) {
+    try {
+        if (Acquire-Lock) {
+            try { Run-Once } finally { Release-Lock }
+        } else {
+            Write-Host "[daemon] [$(Get-Date -Format o)] [mini_update] skipped (locked)"
+        }
+    } catch {
+        Write-Host "[daemon][ERROR] $($_.Exception.Message)`n$($_ | Out-String)"
+        Release-Lock
+        Start-Sleep -Seconds 10
+    }
+    Start-Sleep -Seconds (6*3600)
+}
+
+# Koniec transkryptu (nieosiągalny przy pętli, ale zostawiamy dla porządku)
+Stop-Transcript | Out-Null
