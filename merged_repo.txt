@@ -1,29 +1,14 @@
- PS C:\xau_rl> python -X faulthandler -u ops\mini_update_ppo.py --timesteps 300000 --train_days 120 --val_days 30 --seed 42
-[mini_update] features_csv=data/XAUUSD_M5_features.csv
-[mini_update] df rows=263  from=2025-11-06 15:35:00  to=2025-11-07 14:30:00
-[mini_update] ranges: train_start=2025-06-10 14:30:00  val_start=2025-10-08 14:30:00  val_end=2025-11-07 14:30:00
-[mini_update] counts: train=0  val=263  (WINDOW=128)
-[mini_update][fallback-tight] train=130, val=133
-[mini_update] Training on 130 rows (~120d), timesteps=300000
-
-[mini_update][FATAL] Uncaught exception:
-
-Traceback (most recent call last):
-  File "C:\xau_rl\ops\mini_update_ppo.py", line 201, in <module>
-    main()
-    ~~~~^^
-  File "C:\xau_rl\ops\mini_update_ppo.py", line 170, in main
-    vtrain = DummyVecEnv([make_train]); vtrain = VecMonitor(vtrain); vtrain = VecNormalize(vtrain, norm_obs=True, norm_reward=True, clip_obs=10.0, clip_reward=10.0)
-  File "C:\xau_rl\.venv\Lib\site-packages\stable_baselines3\common\vec_env\dummy_vec_env.py", line 31, in __init__
-    self.envs = [_patch_env(fn()) for fn in env_fns]
-                            ~~^^
-  File "C:\xau_rl\ops\mini_update_ppo.py", line 152, in make_train
-    env = XauTradingEnv(
-        train_df, window=WINDOW,
-    ...<2 lines>...
-        enforce_flat_outside_hours=True, features_spec=features_spec, min_equity=MIN_EQ
-    )
-  File "C:\xau_rl\env_xau.py", line 47, in __init__
-    raise ValueError(f"Missing feature columns: {missing}")
-ValueError: Missing feature columns: ['ema10_lag2', 'close_norm_lag2', 'bb_lo_lag1', 'bb_ma_lag2', 'bb_lo_lag3', 'ema50_lag1', 'close_norm_lag3', 'close_log_lag3', 'spread_abs_median_lag2', 'dow_sin_lag3', 'spread_abs_p75_lag2', 'ema200_lag3', 'bb_up_lag3', 'ema50_lag2', 'ema200_lag1', 'ema10_lag3', 'tod_sin_lag3', 'close_log_lag1', 'dow_sin_lag1', 'bb_up_lag1', 'bb_ma_lag3', 'sma100_lag1', 'close_norm_lag1', 'dow_sin_lag2', 'sma100_lag3', 'tod_cos_lag1', 'ema10_lag1', 'spread_abs_p75_lag1', 'bb_ma_lag1', 'ema200_lag2', 'ema8_lag3', 'tod_cos_lag2', 'bb_lo_lag2', 'ema50_lag3', 'keltner_lo20_lag3', 'tod_sin_lag2', 'spread_abs_median_lag1', 'tod_sin_lag1', 'donchian_lo55_lag3', 'fibo_ret_0618_win100_lag3', 'fibo_ret_0500_win100_lag3', 'fibo_ret_0382_win100_lag3', 'fibo_ret_0786_win100_lag3', 'fibo_ret_0236_win100_lag3', 'sma100_lag2', 'close_log_lag2', 'tod_cos_lag3', 'bb_up_lag2', 'spread_abs_p75_lag3', 'ema12_lag3', 'ema100_lag3', 'pivot_s1_lag2', 'donchian_mid20_lag3', 'donchian_mid55_lag1', 'sma20_lag2', 'sma200_lag1', 'donchian_hi55_lag1', 'ema30_lag1', 'ema8_lag1', 'ema12_lag1', 'ema30_lag3', 'keltner_lo20_lag1', 'donchian_hi55_lag3', 'ema20_lag3', 'keltner_mid20_lag3', 'pivot_r1_lag1', 'donchian_lo20_lag1', 'ichi_leadB_lag2', 'ichi_conv9_lag2', 'pivot_r1_lag3', 'ema100_lag1', 'donchian_lo20_lag3', 'keltner_up20_lag3', 'pivot_s1_lag3', 'keltner_up20_lag1', 'donchian_mid20_lag2', 'sma50_lag3']
-(.venv) PS C:\xau_rl>
+# ------------------------ features_spec ------------------------
+features_spec = None
+fspec = Path("models/features_spec.json")
+if fspec.exists():
+    try:
+        raw = json.loads(fspec.read_text(encoding="utf-8")).get("feature_columns", None)
+    except Exception:
+        raw = None
+    if raw:
+        avail = [c for c in raw if c in df.columns]
+        missing = [c for c in raw if c not in df.columns]
+        if missing:
+            print(f"[mini_update] features_spec: using intersection: avail={len(avail)}, missing={len(missing)} (ignored)", flush=True)
+        features_spec = avail if len(avail) > 0 else None
