@@ -1,1 +1,38 @@
-time_utc,price,action_id,action_label
+  File "C:\xau_rl\paper_demo\paper_loop_mt5_demo.py", line 188, in main
+    obs = build_obs(feat, expected_dim)
+  File "C:\xau_rl\paper_demo\paper_loop_mt5_demo.py", line 106, in build_obs
+    raise RuntimeError(f"Bad block {block.shape} vs {(WINDOW, per_step)}")
+RuntimeError: Bad block (128, 16) vs (128, 27)
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\xau_rl\paper_demo\paper_loop_mt5_demo.py", line 231, in <module>
+    main()
+    ~~~~^^
+  File "C:\xau_rl\paper_demo\paper_loop_mt5_demo.py", line 188, in main
+    obs = build_obs(feat, expected_dim)
+  File "C:\xau_rl\paper_demo\paper_loop_mt5_demo.py", line 106, in build_obs
+    raise RuntimeError(f"Bad block {block.shape} vs {(WINDOW, per_step)}")
+RuntimeError: Bad block (128, 16) vs (128, 27)
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\xau_rl\paper_demo\paper_loop_mt5_demo.py", line 231, in <module>
+    main()
+    ~~~~^^
+  File "C:\xau_rl\paper_demo\paper_loop_mt5_demo.py", line 188, in main
+    obs = build_obs(feat, expected_dim)
+  File "C:\xau_rl\paper_demo\paper_loop_mt5_demo.py", line 106, in build_obs
+    raise RuntimeError(f"Bad block {block.shape} vs {(WINDOW, per_step)}")
+RuntimeError: Bad block (128, 16) vs (128, 27)
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\xau_rl\paper_demo\paper_loop_mt5_demo.py", line 231, in <module>
+    main()
+    ~~~~^^
+  File "C:\xau_rl\paper_demo\paper_loop_mt5_demo.py", line 188, in main
+    obs = build_obs(feat, expected_dim)
+  File "C:\xau_rl\paper_demo\paper_loop_mt5_demo.py", line 106, in build_obs
+    raise RuntimeError(f"Bad block {block.shape} vs {(WINDOW, per_step)}")
+RuntimeError: Bad block (128, 16) vs (128, 27)
