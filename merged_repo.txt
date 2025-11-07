@@ -1,3 +1,8 @@
-[2025-11-07T17:43:05.3016921+01:00] [mini_update] bootstrap_alive
-
-[2025-11-07T17:43:05.3016921+01:00] [mini_update] skipped (locked)
+Out-File : Proces nie moľe uzyska† dost©pu do pliku "C:\xau_rl\logs\services\nightly_report.log", p
+oniewaľ jest on uľywany przez inny proces.
+At C:\xau_rl\ops\daemon_nightly_report.ps1:34 char:34
++ ... R] $($_|Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
++                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OpenError: (:) [Out-File], IOException
+    + FullyQualifiedErrorId : FileOpenFailure,Microsoft.PowerShell.Commands.OutFileCommand
+ 
