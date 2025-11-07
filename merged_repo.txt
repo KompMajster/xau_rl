@@ -1,15 +1,21 @@
 # features/build_features.py
 # -*- coding: utf-8 -*-
-import pandas as pd, numpy as np, yaml, os
+
+import json
+import os
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
+import yaml
+
 # === config / ścieżki ===
-cfg  = yaml.safe_load(open('config.yaml','r',encoding='utf-8'))
+cfg = yaml.safe_load(open('config.yaml', 'r', encoding='utf-8'))
 BARS = Path(cfg['files']['bars_csv'])
 TICKS = Path(cfg['files'].get('ticks_csv', ''))
 FEAT = Path(cfg['files']['features_csv'])
-
 ROOT = Path(__file__).resolve().parents[1]
+
 
 def atomic_write_csv(df: pd.DataFrame, path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -17,50 +23,76 @@ def atomic_write_csv(df: pd.DataFrame, path: Path):
     df.to_csv(tmp, index=False)
     tmp.replace(path)
 
+
 # === wczytanie bazowych świec ===
 def load_bars():
     df = pd.read_csv(BARS, parse_dates=['time'])
     df = df.sort_values('time').reset_index(drop=True)
     # standaryzacja nazw (jeśli pochodzi z innego źródła)
     df = df.rename(columns={
-        'Open':'open','High':'high','Low':'low','Close':'close',
-        'Volume':'tick_volume','TickVolume':'tick_volume','Spread':'spread'
+        'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close',
+        'Volume': 'tick_volume', 'TickVolume': 'tick_volume', 'Spread': 'spread'
     })
-    for c in ['open','high','low','close']:
+    for c in ['open', 'high', 'low', 'close']:
         if c not in df.columns:
             raise RuntimeError(f"Brak kolumny '{c}' w {BARS}")
-    if 'tick_volume' not in df.columns: df['tick_volume'] = np.nan
-    if 'spread' not in df.columns: df['spread'] = np.nan
+    if 'tick_volume' not in df.columns:
+        df['tick_volume'] = np.nan
+    if 'spread' not in df.columns:
+        df['spread'] = np.nan
     return df
+
 
 # === ticki (opcjonalnie) ===
 def maybe_merge_ticks(base_df: pd.DataFrame):
     if not (TICKS and TICKS.exists()):
         return base_df
+
     t = pd.read_csv(TICKS)
     tcol = 'time' if 'time' in t.columns else ('DateTime' if 'DateTime' in t.columns else None)
     if tcol is None:
         return base_df
+
     t[tcol] = pd.to_datetime(t[tcol], utc=True)
-    t = t.rename(columns={tcol:'time'})
-    if {'bid','ask'}.issubset(t.columns):
+    t = t.rename(columns={tcol: 'time'})
+
+    if {'bid', 'ask'}.issubset(t.columns):
         t['spread_abs'] = (t['ask'] - t['bid']).abs()
         t['time_rounded'] = t['time'].dt.floor('min')
-        agg = (t.groupby('time_rounded')
-                 .agg(spread_abs_median=('spread_abs','median'),
-                      spread_abs_p75   =('spread_abs', lambda x: x.quantile(0.75)),
-                      tick_count       =('spread_abs','size'))
-                 .reset_index().rename(columns={'time_rounded':'time'}))
-        out = pd.merge_asof(
-            base_df.sort_values('time'), agg.sort_values('time'),
-            on='time', direction='backward', tolerance=pd.Timedelta('10min')
+
+        agg = (
+            t.groupby('time_rounded')
+             .agg(spread_abs_median=('spread_abs', 'median'),
+                  spread_abs_p75=('spread_abs', lambda x: x.quantile(0.75)),
+                  tick_count=('spread_abs', 'size'))
+             .reset_index()
+             .rename(columns={'time_rounded': 'time'})
         )
-        for c in ['spread_abs_median','spread_abs_p75','tick_count']:
-            if c not in out.columns: out[c] = np.nan
-        # zachowawczo: na razie 0; możesz przeskalować wg p75 jeśli chcesz
-        out['slippage_k_suggested'] = (out['spread_abs_p75'].fillna(out['spread'].abs().fillna(0))) * 0.0
+
+        out = pd.merge_asof(
+            base_df.sort_values('time'),
+            agg.sort_values('time'),
+            on='time',
+            direction='backward',
+            tolerance=pd.Timedelta('10min')
+        )
+
+        # --- KLUCZOWE: wypełnij tick-kolumny, żeby nie ucinać historii ---
+        tick_cols = ['spread_abs_median', 'spread_abs_p75', 'tick_count']
+        for c in tick_cols:
+            if c not in out.columns:
+                out[c] = np.nan
+            out[c] = out[c].fillna(0.0)
+
+        if 'slippage_k_suggested' not in out.columns:
+            out['slippage_k_suggested'] = 0.0
+        else:
+            out['slippage_k_suggested'] = out['slippage_k_suggested'].fillna(0.0)
+
         return out
+
     return base_df
+
 
 # === wskaźniki ===
 def macd(series, fast=12, slow=26, signal=9):
@@ -70,12 +102,15 @@ def macd(series, fast=12, slow=26, signal=9):
     signal_line = macd_line.ewm(span=signal, adjust=False).mean()
     return macd_line, signal_line, macd_line - signal_line
 
+
 def bbands(series, period=20, n_std=2.0):
     ma = series.rolling(period).mean()
     sd = series.rolling(period).std()
-    upper = ma + n_std*sd; lower = ma - n_std*sd
+    upper = ma + n_std * sd
+    lower = ma - n_std * sd
     width = (upper - lower) / (ma.abs() + 1e-12)
     return ma, upper, lower, width
+
 
 def add_tech_features(df):
     df = df.sort_values('time').reset_index(drop=True)
@@ -83,89 +118,92 @@ def add_tech_features(df):
 
     # bazowe
     df['ret1'] = np.log(c).diff()
-    for w in [8,10,12,20,30,50,100,200]:
+    for w in [8, 10, 12, 20, 30, 50, 100, 200]:
         df[f'ema{w}'] = c.ewm(span=w, adjust=False).mean()
-    for w in [20,50,100,200]:
-        df[f'sma{w}'] = c.rolling(w, min_periods=int(w*0.8)).mean()
+    for w in [20, 50, 100, 200]:
+        df[f'sma{w}'] = c.rolling(w, min_periods=int(w * 0.8)).mean()
 
     # RSI / ATR
     d = c.diff()
     up = d.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
     down = (-d.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
     rs = up / (down + 1e-12)
-    df['rsi14'] = 100 - (100/(1+rs))
+    df['rsi14'] = 100 - (100 / (1 + rs))
 
     h, l, cl = df['high'], df['low'], df['close']
-    tr = np.maximum(h-l, np.maximum((h-cl.shift()).abs(), (l-cl.shift()).abs()))
-    for n in [7,14,21]:
+    tr = np.maximum(h - l, np.maximum((h - cl.shift()).abs(), (l - cl.shift()).abs()))
+    for n in [7, 14, 21]:
         df[f'atr{n}'] = tr.ewm(alpha=1/n, adjust=False).mean()
 
     # MACD (klasyczny + warianty)
-    m,s,hst = macd(c, 12,26,9)
-    df['macd']=m; df['macd_signal']=s; df['macd_hist']=hst
-    for (fa,sl,sg) in [(8,17,9),(5,35,5)]:
-        m,s,hst = macd(c, fa,sl,sg)
+    m, s, hst = macd(c, 12, 26, 9)
+    df['macd'] = m; df['macd_signal'] = s; df['macd_hist'] = hst
+    for (fa, sl, sg) in [(8, 17, 9), (5, 35, 5)]:
+        m, s, hst = macd(c, fa, sl, sg)
         tag = f"{fa}_{sl}_{sg}"
-        df[f'macd_{tag}']=m; df[f'macd_signal_{tag}']=s; df[f'macd_hist_{tag}']=hst
+        df[f'macd_{tag}'] = m; df[f'macd_signal_{tag}'] = s; df[f'macd_hist_{tag}'] = hst
 
     # Bollinger
     bb_ma, bb_up, bb_lo, bb_w = bbands(c, period=20, n_std=2.0)
-    df['bb_ma']=bb_ma; df['bb_up']=bb_up; df['bb_lo']=bb_lo; df['bb_width']=bb_w
+    df['bb_ma'] = bb_ma; df['bb_up'] = bb_up; df['bb_lo'] = bb_lo; df['bb_width'] = bb_w
 
     # Donchian / Keltner
-    for n in [20,55]:
+    for n in [20, 55]:
         df[f'donchian_hi{n}'] = df['high'].rolling(n).max()
         df[f'donchian_lo{n}'] = df['low'].rolling(n).min()
-        df[f'donchian_mid{n}']= (df[f'donchian_hi{n}'] + df[f'donchian_lo{n}'])/2
+        df[f'donchian_mid{n}'] = (df[f'donchian_hi{n}'] + df[f'donchian_lo{n}']) / 2
+
     for n in [20]:
         ema = c.ewm(span=n, adjust=False).mean()
         atr = tr.ewm(alpha=1/n, adjust=False).mean()
         df[f'keltner_mid{n}'] = ema
-        df[f'keltner_up{n}']  = ema + 2*atr
-        df[f'keltner_lo{n}']  = ema - 2*atr
+        df[f'keltner_up{n}'] = ema + 2 * atr
+        df[f'keltner_lo{n}'] = ema - 2 * atr
 
     # Ichimoku (bez przesuwania w przód – brak leak)
-    conv = (df['high'].rolling(9).max()  + df['low'].rolling(9).min())/2
-    base = (df['high'].rolling(26).max() + df['low'].rolling(26).min())/2
-    leadA= (conv + base)/2
-    leadB= (df['high'].rolling(52).max() + df['low'].rolling(52).min())/2
-    df['ichi_conv9']=conv; df['ichi_base26']=base; df['ichi_leadA']=leadA; df['ichi_leadB']=leadB
+    conv = (df['high'].rolling(9).max() + df['low'].rolling(9).min()) / 2
+    base = (df['high'].rolling(26).max() + df['low'].rolling(26).min()) / 2
+    leadA = (conv + base) / 2
+    leadB = (df['high'].rolling(52).max() + df['low'].rolling(52).min()) / 2
+    df['ichi_conv9'] = conv; df['ichi_base26'] = base; df['ichi_leadA'] = leadA; df['ichi_leadB'] = leadB
 
     # Fibonacci – relacja do poziomów z okna
-    for win in [50,100]:
+    for win in [50, 100]:
         hi = df['high'].rolling(win).max()
         lo = df['low'].rolling(win).min()
         rng = (hi - lo).replace(0, np.nan)
-        for lvl,name in [(0.236,'0236'),(0.382,'0382'),(0.5,'0500'),(0.618,'0618'),(0.786,'0786')]:
-            fib = lo + lvl*rng
+        for lvl, name in [(0.236, '0236'), (0.382, '0382'), (0.5, '0500'), (0.618, '0618'), (0.786, '0786')]:
+            fib = lo + lvl * rng
             df[f'fibo_ret_{name}_win{win}'] = (df['close'] - fib) / (rng + 1e-12)
 
     # Pivot / Stoch / CCI / ROC
-    pp = (df['high'].shift() + df['low'].shift() + df['close'].shift())/3
-    r1 = 2*pp - df['low'].shift()
-    s1 = 2*pp - df['high'].shift()
-    df['pivot_pp']=pp; df['pivot_r1']=r1; df['pivot_s1']=s1
+    pp = (df['high'].shift() + df['low'].shift() + df['close'].shift()) / 3
+    r1 = 2 * pp - df['low'].shift()
+    s1 = 2 * pp - df['high'].shift()
+    df['pivot_pp'] = pp; df['pivot_r1'] = r1; df['pivot_s1'] = s1
 
     n = 14
-    low_n  = df['low'].rolling(n).min()
+    low_n = df['low'].rolling(n).min()
     high_n = df['high'].rolling(n).max()
     k = 100 * (df['close'] - low_n) / ((high_n - low_n) + 1e-12)
     d = k.rolling(3).mean()
-    df['stoch_k']=k; df['stoch_d']=d
+    df['stoch_k'] = k; df['stoch_d'] = d
 
-    typ = (df['high'] + df['low'] + df['close'])/3
+    typ = (df['high'] + df['low'] + df['close']) / 3
     sma = typ.rolling(20).mean()
     mad = (typ - sma).abs().rolling(20).mean()
     df['cci20'] = (typ - sma) / (0.015 * (mad + 1e-12))
 
-    for n in [5,10,20]:
+    for n in [5, 10, 20]:
         df[f'roc{n}'] = df['close'].pct_change(n)
 
     # cykle doby/tygodnia
-    minute = df['time'].dt.hour*60 + df['time'].dt.minute
-    df['tod_sin'] = np.sin(2*np.pi*minute/1440); df['tod_cos'] = np.cos(2*np.pi*minute/1440)
+    minute = df['time'].dt.hour * 60 + df['time'].dt.minute
+    df['tod_sin'] = np.sin(2 * np.pi * minute / 1440)
+    df['tod_cos'] = np.cos(2 * np.pi * minute / 1440)
     dow = df['time'].dt.dayofweek
-    df['dow_sin'] = np.sin(2*np.pi*dow/7);    df['dow_cos'] = np.cos(2*np.pi*dow/7)
+    df['dow_sin'] = np.sin(2 * np.pi * dow / 7)
+    df['dow_cos'] = np.cos(2 * np.pi * dow / 7)
 
     # log i z‑score ceny + z‑score dla wybranych cech
     df['close_log'] = np.log(c.clip(lower=1e-12))
@@ -174,21 +212,22 @@ def add_tech_features(df):
     df['close_norm'] = (df['close_log'] - mu) / (sd + 1e-8)
 
     feat_cols = [
-      'ret1','ema10','ema20','ema50','ema100','ema200',
-      'sma20','sma50','sma100','sma200',
-      'rsi14','atr7','atr14','atr21',
-      'macd','macd_signal','macd_hist',
-      'macd_8_17_9','macd_signal_8_17_9','macd_hist_8_17_9',
-      'macd_5_35_5','macd_signal_5_35_5','macd_hist_5_35_5',
-      'bb_ma','bb_up','bb_lo','bb_width',
-      'donchian_hi20','donchian_lo20','donchian_mid20',
-      'donchian_hi55','donchian_lo55','donchian_mid55',
-      'keltner_mid20','keltner_up20','keltner_lo20',
-      'ichi_conv9','ichi_base26','ichi_leadA','ichi_leadB',
-      'fibo_ret_0236_win50','fibo_ret_0382_win50','fibo_ret_0500_win50','fibo_ret_0618_win50','fibo_ret_0786_win50',
-      'fibo_ret_0236_win100','fibo_ret_0382_win100','fibo_ret_0500_win100','fibo_ret_0618_win100','fibo_ret_0786_win100',
-      'pivot_pp','pivot_r1','pivot_s1','stoch_k','stoch_d','cci20','roc5','roc10','roc20',
-      'tod_sin','tod_cos','dow_sin','dow_cos'
+        'ret1',
+        'ema10', 'ema20', 'ema50', 'ema100', 'ema200',
+        'sma20', 'sma50', 'sma100', 'sma200',
+        'rsi14', 'atr7', 'atr14', 'atr21',
+        'macd', 'macd_signal', 'macd_hist',
+        'macd_8_17_9', 'macd_signal_8_17_9', 'macd_hist_8_17_9',
+        'macd_5_35_5', 'macd_signal_5_35_5', 'macd_hist_5_35_5',
+        'bb_ma', 'bb_up', 'bb_lo', 'bb_width',
+        'donchian_hi20', 'donchian_lo20', 'donchian_mid20',
+        'donchian_hi55', 'donchian_lo55', 'donchian_mid55',
+        'keltner_mid20', 'keltner_up20', 'keltner_lo20',
+        'ichi_conv9', 'ichi_base26', 'ichi_leadA', 'ichi_leadB',
+        'fibo_ret_0236_win50', 'fibo_ret_0382_win50', 'fibo_ret_0500_win50', 'fibo_ret_0618_win50', 'fibo_ret_0786_win50',
+        'fibo_ret_0236_win100', 'fibo_ret_0382_win100', 'fibo_ret_0500_win100', 'fibo_ret_0618_win100', 'fibo_ret_0786_win100',
+        'pivot_pp', 'pivot_r1', 'pivot_s1', 'stoch_k', 'stoch_d', 'cci20', 'roc5', 'roc10', 'roc20',
+        'tod_sin', 'tod_cos', 'dow_sin', 'dow_cos'
     ]
     for col in feat_cols:
         if col in df.columns:
@@ -198,6 +237,7 @@ def add_tech_features(df):
 
     return df
 
+
 def main():
     # 1) OHLC
     df = load_bars()
@@ -205,32 +245,38 @@ def main():
     df = maybe_merge_ticks(df)
     # 3) wskaźniki
     df = add_tech_features(df)
-
     # 4) (ŚWIADOMIE) nie dokładamy tutaj fundamentów/kalendarza — robi to Feature Discovery.
-    #    Dzięki temu unikamy duplikatów i centralizujemy logikę dołączania external data.
 
-    # 5) Oczyść początek serii po rollingach
-    df = df.dropna().reset_index(drop=True)
+    # 5) Oczyść początek serii po rollingach – TYLKO po rdzeniu, nie po wszystkich kolumnach
+    core = [
+        'time', 'open', 'high', 'low', 'close', 'tick_volume', 'spread',
+        'close_log', 'close_norm', 'ret1',
+        'ema10', 'ema20', 'ema50', 'ema100', 'ema200',
+        'sma20', 'sma50', 'sma100', 'sma200',
+        'rsi14', 'atr7', 'atr14', 'atr21',
+        'macd', 'macd_signal', 'macd_hist',
+        'bb_ma', 'bb_up', 'bb_lo', 'bb_width',
+        'tod_sin', 'tod_cos', 'dow_sin', 'dow_cos'
+    ]
+    have = [c for c in core if c in df.columns]
+    df = df.dropna(subset=have).reset_index(drop=True)
 
     # 6) Zapis atomowy
     atomic_write_csv(df, FEAT)
 
-    # 7) features_spec.json:
-    #    Nie nadpisujemy tego, co generuje Feature Discovery.
-    #    Jeśli brak pliku (pierwszy start), zrób prosty spec z bieżących kolumn.
+    # 7) features_spec.json: generuj tylko, jeśli go nie ma (pierwsze uruchomienie)
     spec_path = ROOT / "models" / "features_spec.json"
     if not spec_path.exists():
-        base_cols = ['time','open','high','low','close','tick_volume','spread']
-        feature_columns = [c for c in df.columns if c not in base_cols + ['close_log','close_norm']]
-        spec = {"feature_columns": feature_columns, "price_column":"close_norm"}
+        base_cols = ['time', 'open', 'high', 'low', 'close', 'tick_volume', 'spread']
+        tick_cols = ['spread_abs_median', 'spread_abs_p75', 'tick_count', 'slippage_k_suggested']
+        feature_columns = [c for c in df.columns if c not in base_cols + tick_cols + ['close_log', 'close_norm']]
+        spec = {"feature_columns": feature_columns, "price_column": "close_norm"}
         spec_path.parent.mkdir(parents=True, exist_ok=True)
-        spec_path.write_text(
-            json.dumps(spec, ensure_ascii=False, indent=2), encoding='utf-8'
-        )
+        spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding='utf-8')
         print("Saved initial models/features_spec.json (first run).")
 
     print(f"Saved features -> {FEAT.as_posix()} (rows={len(df)}, cols={len(df.columns)})")
 
+
 if __name__ == "__main__":
-    import json
     main()
