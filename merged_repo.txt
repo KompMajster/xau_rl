@@ -1,48 +1,45 @@
-# encoding: utf-8
-$ErrorActionPreference="Stop"
-
-$REPO="C:\xau_rl"; $PY="$REPO\.venv\Scripts\python.exe"
-$LOG="$REPO\logs\services\feature_discovery.log"; $LOCK="$REPO\logs\services\feature_discovery.lock"
-
-New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null
-Set-Location $REPO
-
-# Lekki nagłówek diagnostyczny (nie blokuje pliku jak Out-File)
-"[$(Get-Date -Format o)] [feature_discovery] bootstrap_alive (REPO=$REPO, PY_EXISTS=$(bool))" |
-  Add-Content -LiteralPath $LOG -Encoding UTF8
-
-function Acquire-Lock { if(Test-Path $LOCK){$false}else{New-Item -ItemType File -Path $LOCK -Force|Out-Null;$true} }
-function Release-Lock { if(Test-Path $LOCK){Remove-Item $LOCK -Force} }
-
-function Run-Once {
-  # Upewnij się, że tu są PRAWDZIWE znaki: &, *, > (żadnych &amp; / &gt;)
-  & $PY "ops\feature_discovery_weekly.py" "--topK" "96" "--max_lag" "3" "--change_frac" "0.10" *>> $LOG
-}
-
-function Seconds-To-Next-21 {
-  $now = Get-Date
-  $target = [DateTime]::Today.AddHours(21)
-  if ($now -ge $target) { $target = $target.AddDays(1) }
-  $diff = $target - $now
-  return ([int]$diff.TotalSeconds)
-}
-
-while($true){
-  Start-Sleep -Seconds (Seconds-To-Next-21)
-  $ts=Get-Date -Format o
-  try{
-    if(Acquire-Lock){
-      "`n[$ts] [feature_discovery] start" | Add-Content -LiteralPath $LOG -Encoding UTF8
-      Run-Once
-      "`n[$(Get-Date -Format o)] [feature_discovery] done" | Add-Content -LiteralPath $LOG -Encoding UTF8
-      Release-Lock
-    } else {
-      "`n[$ts] [feature_discovery] skipped (locked)" | Add-Content -LiteralPath $LOG -Encoding UTF8
-    }
-  } catch {
-    "[ERROR] $($_|Out-String)" | Add-Content -LiteralPath $LOG -Encoding UTF8
-    Release-Lock
-  }
-  # co 3 dni (z minutowym buforem)
-  Start-Sleep -Seconds (3*24*3600 - 60)
-}
+bool : The term 'bool' is not recognized as the name of a cmdlet, function, script file, or operabl
+e program. Check the spelling of the name, or if a path was included, verify that the path is corre
+ct and try again.
+At C:\xau_rl\ops\daemon_feature_discovery.ps1:11 char:87
++ ... feature_discovery] bootstrap_alive (REPO=$REPO, PY_EXISTS=$(bool))" |
++                                                                 ~~~~
+    + CategoryInfo          : ObjectNotFound: (bool:String) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : CommandNotFoundException
+ 
+bool : The term 'bool' is not recognized as the name of a cmdlet, function, script file, or operabl
+e program. Check the spelling of the name, or if a path was included, verify that the path is corre
+ct and try again.
+At C:\xau_rl\ops\daemon_feature_discovery.ps1:11 char:87
++ ... feature_discovery] bootstrap_alive (REPO=$REPO, PY_EXISTS=$(bool))" |
++                                                                 ~~~~
+    + CategoryInfo          : ObjectNotFound: (bool:String) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : CommandNotFoundException
+ 
+bool : The term 'bool' is not recognized as the name of a cmdlet, function, script file, or operabl
+e program. Check the spelling of the name, or if a path was included, verify that the path is corre
+ct and try again.
+At C:\xau_rl\ops\daemon_feature_discovery.ps1:11 char:87
++ ... feature_discovery] bootstrap_alive (REPO=$REPO, PY_EXISTS=$(bool))" |
++                                                                 ~~~~
+    + CategoryInfo          : ObjectNotFound: (bool:String) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : CommandNotFoundException
+ 
+bool : The term 'bool' is not recognized as the name of a cmdlet, function, script file, or operabl
+e program. Check the spelling of the name, or if a path was included, verify that the path is corre
+ct and try again.
+At C:\xau_rl\ops\daemon_feature_discovery.ps1:11 char:87
++ ... feature_discovery] bootstrap_alive (REPO=$REPO, PY_EXISTS=$(bool))" |
++                                                                 ~~~~
+    + CategoryInfo          : ObjectNotFound: (bool:String) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : CommandNotFoundException
+ 
+bool : The term 'bool' is not recognized as the name of a cmdlet, function, script file, or operabl
+e program. Check the spelling of the name, or if a path was included, verify that the path is corre
+ct and try again.
+At C:\xau_rl\ops\daemon_feature_discovery.ps1:11 char:87
++ ... feature_discovery] bootstrap_alive (REPO=$REPO, PY_EXISTS=$(bool))" |
++                                                                 ~~~~
+    + CategoryInfo          : ObjectNotFound: (bool:String) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : CommandNotFoundException
+ 
