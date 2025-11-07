@@ -1,121 +1,30 @@
-# encoding: utf-8
-$ErrorActionPreference = "Stop"
-
-# ==== KONFIG ====
-$REPO   = "C:\xau_rl"
-$PY     = Join-Path $REPO ".venv\Scripts\python.exe"
-$LogDir = Join-Path $REPO "logs\services"
-New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
-
-# Unikalny log per uruchomienie (łatwiej debugować)
-$STAMP = Get-Date -Format "yyyyMMdd_HHmmss"
-$LOG   = Join-Path $LogDir "mini_update_ppo_$STAMP.log"
-$ERR   = "$LOG.err"
-$LOCK  = Join-Path $LogDir "mini_update_ppo.lock"
-
-# Nagłówek do logu (nie używamy Start-Transcript, by nie trzymać uchwytu)
-"[daemon] ===== mini_update start ====="                  | Add-Content -Path $LOG -Encoding UTF8
-"[daemon] TS    : $(Get-Date -Format o)"                  | Add-Content -Path $LOG -Encoding UTF8
-"[daemon] PSVer : $($PSVersionTable.PSVersion)"           | Add-Content -Path $LOG -Encoding UTF8
-"[daemon] REPO  : $REPO"                                  | Add-Content -Path $LOG -Encoding UTF8
-"[daemon] PY    : $PY (exists? $(bool))" | Add-Content -Path $LOG -Encoding UTF8
-"[daemon] PATH  : $env:PATH"                              | Add-Content -Path $LOG -Encoding UTF8
-"" | Add-Content -Path $LOG -Encoding UTF8
-
-# Katalog roboczy repo (BARDZO ważne dla ścieżek względnych)
-Set-Location $REPO
-
-# Zapas: jeżeli brak .venv/python.exe, spróbuj 'python' z PATH
-if (-not (Test-Path -LiteralPath $PY)) { $PY = "python" }
-
-# ---- LOCK na uchwycie (żeby nie startować równolegle) ----
-$script:LockHandle = $null
-function Acquire-Lock {
-    try {
-        $script:LockHandle = [System.IO.File]::Open(
-            $LOCK,
-            [System.IO.FileMode]::OpenOrCreate,
-            [System.IO.FileAccess]::ReadWrite,
-            [System.IO.FileShare]::None
-        )
-        return $true
-    } catch {
-        return $false
-    }
+$ErrorActionPreference="Stop"
+$REPO="C:\xau_rl"; $PY="$REPO\.venv\Scripts\python.exe"
+$LOG="$REPO\logs\services\fetch_features.log"; $LOCK="$REPO\logs\services\fetch_features.lock"
+New-Item -ItemType Directory -Force -Path (Split-Path $LOG) | Out-Null; Set-Location $REPO
+if(-not (Test-Path $LOG) -or (Get-Item $LOG).Length -eq 0){
+  "[$(Get-Date -Format o)] [fetch_features] bootstrap_alive" | Out-File -FilePath $LOG -Append -Encoding utf8
 }
-function Release-Lock {
-    try {
-        if ($script:LockHandle) {
-            $script:LockHandle.Close()
-            $script:LockHandle.Dispose()
-            $script:LockHandle = $null
-        }
-    } catch {}
-    try { Remove-Item $LOCK -Force -ErrorAction SilentlyContinue } catch {}
-}
-
-# Jednorazowe uruchomienie mini_update
+function Acquire-Lock { if(Test-Path $LOCK){$false}else{New-Item -ItemType File -Path $LOCK -Force|Out-Null;$true} }
+function Release-Lock { if(Test-Path $LOCK){Remove-Item $LOCK -Force} }
 function Run-Once {
-    $ts = Get-Date -Format o
-    "[daemon] [$ts] [mini_update] start" | Add-Content -Path $LOG -Encoding UTF8
-
-    # --- Uruchom Python z pełnym przekierowaniem strumieni do plików ---
-    #   -> unikamy operatorów >> i 2>>&1, żeby nie mieć problemów z encjami/parsowaniem
-    if (Test-Path -LiteralPath $ERR) { Remove-Item -LiteralPath $ERR -Force -ErrorAction SilentlyContinue }
-
-    $psi = @{
-        FilePath               = $PY
-        ArgumentList           = @('-u','ops\mini_update_ppo.py','--timesteps','300000')
-        WorkingDirectory       = $REPO
-        NoNewWindow            = $true
-        PassThru               = $true
-        RedirectStandardOutput = $LOG
-        RedirectStandardError  = $ERR
-        WindowStyle            = 'Hidden'
-    }
-    $p = Start-Process @psi
-    $p.WaitForExit()
-
-    # Złącz STDERR do głównego logu (jeśli coś było), potem usuń .err
-    if (Test-Path -LiteralPath $ERR) {
-        $errText = Get-Content -LiteralPath $ERR -Raw -ErrorAction SilentlyContinue
-        if ($errText) {
-            "`n[daemon][stderr] ====================" | Add-Content -Path $LOG -Encoding UTF8
-            $errText | Add-Content -Path $LOG -Encoding UTF8
-        }
-        Remove-Item -LiteralPath $ERR -Force -ErrorAction SilentlyContinue
-    }
-
-    $code = $p.ExitCode
-    "[daemon] [$ts] [mini_update] exit_code=$code" | Add-Content -Path $LOG -Encoding UTF8
-    if ($code -ne 0) {
-        throw "mini_update failed with exit_code=$code (see $LOG)"
-    }
-
-    "[daemon] [$ts] [mini_update] done" | Add-Content -Path $LOG -Encoding UTF8
+  & $PY "fetch__mt5_data.py"         *>> $LOG
+  & $PY "features\build_features.py" *>> $LOG
 }
-
-# Globalny trap – zawsze oddaj lock i nie dopuszczaj do „karuzeli”
-trap {
-    $msg = "[daemon][ERROR] $($_.Exception.Message)`n$($_ | Out-String)"
-    $msg | Add-Content -Path $LOG -Encoding UTF8
+while($true){
+  $ts=Get-Date -Format o
+  try{
+    if(Acquire-Lock){
+      "`n[$ts] [fetch_features] start" | Out-File -FilePath $LOG -Append -Encoding utf8
+      Run-Once
+      "`n[$(Get-Date -Format o)] [fetch_features] done" | Out-File -FilePath $LOG -Append -Encoding utf8
+      Release-Lock
+    } else {
+      "`n[$ts] [fetch_features] skipped (locked)" | Out-File -FilePath $LOG -Append -Encoding utf8
+    }
+  }catch{
+    "[ERROR] $($_|Out-String)" | Out-File -FilePath $LOG -Append -Encoding utf8
     Release-Lock
-    Start-Sleep -Seconds 10
-    continue
-}
-
-# Pętla co 6 godzin
-while ($true) {
-    try {
-        if (Acquire-Lock) {
-            try { Run-Once } finally { Release-Lock }
-        } else {
-            "[daemon] [$(Get-Date -Format o)] [mini_update] skipped (locked)" | Add-Content -Path $LOG -Encoding UTF8
-        }
-    } catch {
-        "[daemon][ERROR] $($_.Exception.Message)`n$($_ | Out-String)" | Add-Content -Path $LOG -Encoding UTF8
-        Release-Lock
-        Start-Sleep -Seconds 10
-    }
-    Start-Sleep -Seconds (6*3600)
+  }
+  Start-Sleep -Seconds 600
 }
