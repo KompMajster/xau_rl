@@ -1,2 +1,5 @@
-cd C:\xau_rl
-.\.venv\Scripts\python.exe ops\evaluate.py --max_eval_steps 3000 --out_dir reports
+PS C:\xau_rl> .\.venv\Scripts\python.exe rl\evaluate.py --max_eval_steps 3000 --out_dir reports
+Traceback (most recent call last):
+  File "C:\xau_rl\rl\evaluate.py", line 9, in <module>
+    from env_xau import XauTradingEnv
+ModuleNotFoundError: No module named 'env_xau'
