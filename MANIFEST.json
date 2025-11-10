@@ -1,0 +1,19 @@
+{
+  "format": "REPO-TARXZ-B85",
+  "generated_at_utc": "2025-11-10T11:10:57.791819+00:00",
+  "repo_root": "C:\\xau_rl",
+  "tar_xz_sha256": "e113de64845929463e823edcd1186121f1e0ee144680cff9ebafa9601bd67c88",
+  "tar_xz_size_bytes": 7145788,
+  "parts": [
+    {
+      "file": "PART_0001.txt",
+      "index": 1,
+      "chunk_len": 4467117
+    },
+    {
+      "file": "PART_0002.txt",
+      "index": 2,
+      "chunk_len": 4465118
+    }
+  ]
+}
