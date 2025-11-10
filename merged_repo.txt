@@ -1,102 +1,154 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-pack_repo_to_text.py
-Pakuje wskazane repo/katalog do .tar.gz, liczy SHA-256, koduje Base64
-i dzieli na porcje tekstowe PART_XXXX.txt do wklejenia w czacie.
+pack_repo_to_text_v2.py
+Pakuje repo do .tar.xz (LZMA), koduje Base85 i dzieli na N części tekstowych.
+Wspiera:
+ - --max-parts   (automatyczny dobór wielkości porcji)
+ - --chunk-kb    (ręczny rozmiar porcji)
+ - --code-only   (tylko pliki kodu/dokumentacji)
+ - --max-file-size-mb (pomijaj bardzo duże pliki)
+ - standardowe wykluczenia (.git, .venv, __pycache__, logs, itp.)
+ - manifest z SHA-256 (integralność)
 
-Użycie:
-  python pack_repo_to_text.py --repo C:\sciezka\do\repo --out out_text --chunk-kb 200
-(albo na Linux/macOS)
-  python3 pack_repo_to_text.py --repo ./repo --out ./out_text --chunk-kb 200
+Użycie (przykłady):
+  python pack_repo_to_text_v2.py --repo . --out out_text --max-parts 10 --code-only
+  python pack_repo_to_text_v2.py --repo C:\repo --out C:\out --chunk-kb 800
+  python pack_repo_to_text_v2.py --repo . --out out_text --max-parts 12 --max-file-size-mb 10
 """
 
-import os, sys, tarfile, base64, hashlib, argparse, json, textwrap
+import os, sys, tarfile, lzma, argparse, json, textwrap, base64, hashlib, io
 from pathlib import Path
 from datetime import datetime, timezone
-import io
 
-EXCLUDE_DIRS = {'.git', '.hg', '.svn', '__pycache__', '.venv', 'venv', 'env', 'node_modules', 'logs'}
+# katalogi/pliiki do wykluczenia
+EXCLUDE_DIRS = {
+    '.git', '.hg', '.svn', '__pycache__', '.mypy_cache', '.ruff_cache',
+    '.venv', 'venv', 'env', '.idea', '.vscode', 'node_modules',
+    'logs', 'dist', 'build', '.cache', '.gradle'
+}
 EXCLUDE_FILES = {'.DS_Store', 'Thumbs.db'}
+DEFAULT_CODE_EXT = {'.py', '.ipynb', '.md', '.rst', '.txt', '.yaml', '.yml', '.toml',
+                    '.ini', '.cfg', '.ps1', '.bat', '.sh', '.csv'}
 
 def sha256_bytes(data: bytes) -> str:
     h = hashlib.sha256(); h.update(data); return h.hexdigest()
 
-def iter_files(root: Path):
-    for p in root.rglob('*'):
-        if p.is_dir():
-            rel = p.relative_to(root)
-            if any(part in EXCLUDE_DIRS for part in rel.parts):
-                continue
-            continue
-        rel = p.relative_to(root)
-        if any(part in EXCLUDE_DIRS for part in rel.parts):
-            continue
-        if p.name in EXCLUDE_FILES:
-            continue
-        yield p
+def want_file(path: Path, repo_root: Path, code_only: bool, max_mb: float | None):
+    rel = path.relative_to(repo_root)
+    # katalogi po drodze
+    for part in rel.parts:
+        if part in EXCLUDE_DIRS:
+            return False
+    # ignoruj katalogi (tu sprawdzamy tylko pliki)
+    if not path.is_file():
+        return False
+    # wyklucz konkretne pliki
+    if path.name in EXCLUDE_FILES:
+        return False
+    # code-only?
+    if code_only:
+        if path.suffix.lower() not in DEFAULT_CODE_EXT:
+            return False
+    # limit rozmiaru
+    if max_mb is not None:
+        try:
+            if path.stat().st_size > int(max_mb * 1024 * 1024):
+                return False
+        except Exception:
+            pass
+    return True
 
-def make_tar_gz_bytes(repo_root: Path) -> bytes:
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode='w:gz') as tar:
-        for f in iter_files(repo_root):
+def iter_files(repo_root: Path, code_only: bool, max_mb: float | None):
+    for p in repo_root.rglob('*'):
+        if p.is_file() and want_file(p, repo_root, code_only, max_mb):
+            yield p
+
+def create_tar_xz(repo_root: Path, code_only: bool, max_mb: float | None) -> bytes:
+    # 1) stwórz tar w pamięci
+    tar_buf = io.BytesIO()
+    with tarfile.open(fileobj=tar_buf, mode='w') as tar:
+        for f in iter_files(repo_root, code_only, max_mb):
             arcname = str(f.relative_to(repo_root)).replace('\\','/')
             tar.add(f, arcname=arcname, recursive=False)
-    return buf.getvalue()
+    tar_bytes = tar_buf.getvalue()
+    # 2) skompresuj LZMA/XZ (preset 6-7 to dobry kompromis; 9 najcięższy)
+    xz_bytes = lzma.compress(tar_bytes, preset=6, format=lzma.FORMAT_XZ)
+    return xz_bytes
 
-def split_b64_to_parts(b64_str: str, chunk_kb: int):
-    chunk = chunk_kb * 1024
-    for i in range(0, len(b64_str), chunk):
-        yield b64_str[i:i+chunk]
+def b85_encode(data: bytes) -> str:
+    return base64.b85encode(data).decode('ascii')
+
+def split_to_parts(s: str, chunk_chars: int):
+    for i in range(0, len(s), chunk_chars):
+        yield s[i:i+chunk_chars]
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--repo', required=True, help='Katalog repo do spakowania')
     ap.add_argument('--out', required=True, help='Folder na pliki tekstowe')
-    ap.add_argument('--chunk-kb', type=int, default=200, help='Rozmiar porcji w KB (domyślnie 200)')
+    ap.add_argument('--max-parts', type=int, default=None, help='Docelowa liczba części (skrypt policzy chunk)')
+    ap.add_argument('--chunk-kb', type=int, default=None, help='Ręcznie: rozmiar porcji w KB (zamiast --max-parts)')
+    ap.add_argument('--code-only', action='store_true', help='Pakuj tylko pliki kodu/dokumentacji')
+    ap.add_argument('--max-file-size-mb', type=float, default=None, help='Pomiń pliki większe niż X MB')
     args = ap.parse_args()
 
     repo_root = Path(args.repo).resolve()
     out_dir = Path(args.out).resolve(); out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"[INFO] Repo: {repo_root}")
-    print(f"[INFO] Out : {out_dir}")
+    print(f"[INFO] repo={repo_root}")
+    print(f"[INFO] out ={out_dir}")
+    print(f"[INFO] options: code_only={args.code_only}, max_file_size_mb={args.max_file_size_mb}, "
+          f"max_parts={args.max_parts}, chunk_kb={args.chunk_kb}")
 
-    tgz = make_tar_gz_bytes(repo_root)
-    tgz_sha = sha256_bytes(tgz)
-    tgz_size = len(tgz)
-    print(f"[OK] Tar.gz bytes: {tgz_size} B, sha256={tgz_sha}")
+    # Tworzenie .tar.xz
+    xz = create_tar_xz(repo_root, code_only=args.code_only, max_mb=args.max_file_size_mb)
+    xz_sha = sha256_bytes(xz)
+    xz_size = len(xz)
+    print(f"[OK] tar.xz size={xz_size} B, sha256={xz_sha}")
 
-    b64 = base64.b64encode(tgz).decode('ascii')
-    parts = list(split_b64_to_parts(b64, args.chunk_kb))
+    # Base85 (mniejszy narzut niż base64)
+    b85 = b85_encode(xz)
+    total_chars = len(b85)
+
+    # Wylicz chunk
+    if args.max_parts and args.max_parts > 0:
+        # przyjmijmy ~1:1 znaków do bajtów (UTF-8 ASCII), dodamy lekki margines nagłówków
+        chunk_chars = max(10_000, total_chars // args.max_parts + 1000)
+    elif args.chunk_kb and args.chunk_kb > 0:
+        chunk_chars = args.chunk_kb * 1024
+    else:
+        # bez danych – domyślnie około 500 KB tekstu na część
+        chunk_chars = 500 * 1024
+
+    parts = list(split_to_parts(b85, chunk_chars))
     total_parts = len(parts)
-    print(f"[OK] Base64 parts: {total_parts} x ~{args.chunk_kb} KB")
+    print(f"[OK] parts={total_parts} (chunk ~{chunk_chars//1024} KB)")
 
-    # manifest .json
     manifest = {
+        "format": "REPO-TARXZ-B85",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "repo_root": str(repo_root),
-        "tar_gz_sha256": tgz_sha,
-        "tar_gz_size_bytes": tgz_size,
+        "tar_xz_sha256": xz_sha,
+        "tar_xz_size_bytes": xz_size,
         "parts": []
     }
 
-    for idx, chunk in enumerate(parts, start=1):
-        fname = out_dir / f"PART_{idx:04d}.txt"
+    for i, chunk in enumerate(parts, start=1):
         header = {
-            "format": "REPO-TGZ-B64-PART",
-            "index": idx,
+            "format": "REPO-TARXZ-B85-PART",
+            "index": i,
             "total": total_parts,
-            "tar_gz_sha256": tgz_sha,
+            "tar_xz_sha256": xz_sha,
             "chunk_len": len(chunk)
         }
-        # zapis w czytelnym formacie: nagłówek JSON + pusta linia + base64
-        content = json.dumps(header, ensure_ascii=False) + "\n\n" + chunk + "\n"
-        fname.write_text(content, encoding='utf-8')
-        manifest["parts"].append({"file": fname.name, "index": idx, "chunk_len": len(chunk)})
+        fname = out_dir / f"PART_{i:04d}.txt"
+        fname.write_text(json.dumps(header, ensure_ascii=False) + "\n\n" + chunk + "\n", encoding='utf-8')
+        manifest["parts"].append({"file": fname.name, "index": i, "chunk_len": len(chunk)})
 
     (out_dir / "MANIFEST.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding='utf-8')
-    print(f"[DONE] Zapisano {total_parts} plików PART_XXXX.txt + MANIFEST.json do: {out_dir}")
-
+    print(f"[DONE] Zapisano {total_parts} części + MANIFEST.json -> {out_dir}")
+    if total_parts > 20:
+        print("[HINT] Wygląda na dużo części. Spróbuj ponownie z --code-only, --max-file-size-mb lub mniejszą liczbą --max-parts.")
 if __name__ == '__main__':
     main()
