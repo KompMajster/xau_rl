@@ -1,0 +1,999 @@
+{
+  "generated_at_utc": "2025-11-10T11:34:20.369260+00:00",
+  "repo_root": "C:\\xau_rl",
+  "max_zip_size_mb": 25.0,
+  "volumes": [
+    {
+      "index": 1,
+      "zip_name": "repo_part_001.zip",
+      "files": [
+        {
+          "relpath": ".gitattributes",
+          "size": 66,
+          "sha256": "1a1dbe176bc233b499d35a57db7513f2941c99ab9759f177830c9149be99005b",
+          "volume_index": 1
+        },
+        {
+          "relpath": "_backup_py/env_xau.py",
+          "size": 5251,
+          "sha256": "7ea9c9f5da365203393c19ca4958e70c4b12f3bd1e3f56156591a581326db973",
+          "volume_index": 1
+        },
+        {
+          "relpath": "_backup_py/fetch__mt5_data.py",
+          "size": 7671,
+          "sha256": "2004e9a9c32983af82367f413aaa43e1fd1f493db795478212c8313dd6761e1b",
+          "volume_index": 1
+        },
+        {
+          "relpath": "_backup_py/quick_env_test.py",
+          "size": 759,
+          "sha256": "d3cd8fb5a8a07ae18d3ca23ab9ed8254c508ac16789b1db7a2e048c7f765a3aa",
+          "volume_index": 1
+        },
+        {
+          "relpath": "bootstrap_pack.ps1",
+          "size": 54787,
+          "sha256": "6b1eb907d57a5132ce2d3af82adde3baeda2e7f86c08f740612fb75367927fdf",
+          "volume_index": 1
+        },
+        {
+          "relpath": "check.py",
+          "size": 182,
+          "sha256": "35f0d56e4ee2a7171df041c2beef02c0b5602936463c395d0ba0ef615d62704d",
+          "volume_index": 1
+        },
+        {
+          "relpath": "config.yaml",
+          "size": 922,
+          "sha256": "0a1a927e339d6a4bcbca9e4df5122d98b5444e110acfc2b9da2d0f0692cd5e63",
+          "volume_index": 1
+        },
+        {
+          "relpath": "data/XAUUSD_M5.csv",
+          "size": 860975,
+          "sha256": "46e42b59b884b1c77ad72391aa638e58174043e07800c3b195245a9c0aeec532",
+          "volume_index": 1
+        },
+        {
+          "relpath": "data/XAUUSD_M5_features.csv",
+          "size": 17309526,
+          "sha256": "900b8dd4137f464ba7db304d5e90c31f93fcfa5bbf644d2f9a3bf02264aaaae3",
+          "volume_index": 1
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "zip_name": "repo_part_002.zip",
+      "files": [
+        {
+          "relpath": "data/XAUUSD_ticks_sample.csv",
+          "size": 15260424,
+          "sha256": "4234220260e7d6978b453a7635f9683894d9a017665d6e741972b141e1167908",
+          "volume_index": 2
+        },
+        {
+          "relpath": "env_xau.py",
+          "size": 7497,
+          "sha256": "1de1f5253ee475f585f925e76c1a712fe04ccaeb124cf304258bb5b4253c3465",
+          "volume_index": 2
+        },
+        {
+          "relpath": "features/__init__.py",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "volume_index": 2
+        },
+        {
+          "relpath": "features/build_features.py",
+          "size": 11088,
+          "sha256": "f905928a40a6ffcc46a07b289c91e76c7ce91ea5c0e45f026268975d5cb9ae64",
+          "volume_index": 2
+        },
+        {
+          "relpath": "features/calendar_features.py",
+          "size": 6170,
+          "sha256": "0c97b204b029aa3db925f441307c976616aef7353654ed1a9e08de33db874794",
+          "volume_index": 2
+        },
+        {
+          "relpath": "features/discover.py",
+          "size": 5224,
+          "sha256": "629d1e351ae924675c221aeb4ac840e34574ee00ab7e485dbbf6e10666e584e3",
+          "volume_index": 2
+        },
+        {
+          "relpath": "features/fundamentals.py",
+          "size": 8880,
+          "sha256": "5bb09f7e809a3fafaf23fe48197412ab3985af617d89fbcc6a6bf5f8011fdeae",
+          "volume_index": 2
+        },
+        {
+          "relpath": "features_check.py",
+          "size": 197,
+          "sha256": "62f9ee249ebed8a04f7bb667a22b7be6faae2eea690966c3370d1679fb842a95",
+          "volume_index": 2
+        },
+        {
+          "relpath": "fetch__mt5_data.py",
+          "size": 14997,
+          "sha256": "1b04f873f2f4deab334ab986fe6eb355b0cc355f797e23afcfde85db5752c5a3",
+          "volume_index": 2
+        },
+        {
+          "relpath": "manually.py",
+          "size": 175,
+          "sha256": "1eedcfca7a882d9d9f4421e9df273c1ca34badfb0cbfdd7cce267b66a70ac7dc",
+          "volume_index": 2
+        },
+        {
+          "relpath": "merge_repo.py",
+          "size": 1681,
+          "sha256": "73aa317e302e0cecf9a22cf18b6db111cb66198935b2960828cb9cc63eb5fce4",
+          "volume_index": 2
+        },
+        {
+          "relpath": "models/best_model.zip",
+          "size": 9560873,
+          "sha256": "c5ca138051e46902c5c641dbd7e7aeecd3a0a01f551deac8d657c2528363b1c0",
+          "volume_index": 2
+        },
+        {
+          "relpath": "models/features_spec.json",
+          "size": 2421,
+          "sha256": "dbe5c0fb121f73ba47e74926e8decc7d1b7cd4a5be100421f499ca61b948cc68",
+          "volume_index": 2
+        },
+        {
+          "relpath": "models/features_spec_history.jsonl",
+          "size": 16510,
+          "sha256": "7fc68047ea7fc671de672246b2fd7c8b75a9c967d2fbba1c2842bfd71e3e0260",
+          "volume_index": 2
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "zip_name": "repo_part_003.zip",
+      "files": [
+        {
+          "relpath": "models/ppo_xauusd_m5.zip",
+          "size": 9560875,
+          "sha256": "01cac0b386ad57f03a02a5a453e65200830534354bd3dc6f6841ae4f156cb816",
+          "volume_index": 3
+        },
+        {
+          "relpath": "models/registry/cand_00/equity.png",
+          "size": 49677,
+          "sha256": "ffd6b6a8cdf25e057f2b8c43017991006e2a9d33d530211a4bfaa9c36e9ceeee",
+          "volume_index": 3
+        },
+        {
+          "relpath": "models/registry/cand_00/metrics.json",
+          "size": 70,
+          "sha256": "f3e94b9c3f5ac2a1228826271cbba59e9f47c71131a280e91e2b012304a105ad",
+          "volume_index": 3
+        },
+        {
+          "relpath": "models/registry/cand_00/model.zip",
+          "size": 7580018,
+          "sha256": "63fd25fcd708f8c0d2ab340529fec04fb21fc25cdec3ba9a45f6829d9e59a909",
+          "volume_index": 3
+        },
+        {
+          "relpath": "models/registry/cand_00/vecnorm.pkl",
+          "size": 70920,
+          "sha256": "d6db8cc3325641c8b311ad7b3220a5fd330f07f8f0f7bdda3bc690b563d42e80",
+          "volume_index": 3
+        },
+        {
+          "relpath": "models/registry/current.txt",
+          "size": 7,
+          "sha256": "c650c59d59e6205c6d2ef1f6cef79113b1d53c1b14b04467d762287a1ebb2a91",
+          "volume_index": 3
+        },
+        {
+          "relpath": "models/vecnorm_xauusd_m5.pkl",
+          "size": 90129,
+          "sha256": "0b3607e898e84585e85fb905566d019dcad89c95bd5396f167eecc186daa3474",
+          "volume_index": 3
+        },
+        {
+          "relpath": "ops/daemon_calibration_biweekly.ps1",
+          "size": 1551,
+          "sha256": "06e77555e106e9402b9aebb76ddef28d3d5cb85f617143984f245f3364f83692",
+          "volume_index": 3
+        },
+        {
+          "relpath": "ops/daemon_cleanup.ps1",
+          "size": 3311,
+          "sha256": "833a65bf268bbae93181347cbc1d05292705447362d0e5f2ebbfee81bdeaf504",
+          "volume_index": 3
+        },
+        {
+          "relpath": "ops/daemon_daily_report.ps1",
+          "size": 1212,
+          "sha256": "5fd93b459e1fbc83ba7435ef73c1959f5b9e7eb59d8da404fd9ed1cfca3bd0a6",
+          "volume_index": 3
+        },
+        {
+          "relpath": "ops/daemon_feature_discovery.ps1",
+          "size": 1674,
+          "sha256": "bb641cbe38a9952cb1b729364ffed3fb12c55fff13ce41d1703a717e8b60b697",
+          "volume_index": 3
+        },
+        {
+          "relpath": "ops/daemon_fetch_features.ps1",
+          "size": 1333,
+          "sha256": "c74cf425bdd3fa94d59a6917632db1c7018d7ccd1464b44cf5a289cccaae1fe4",
+          "volume_index": 3
+        },
+        {
+          "relpath": "ops/daemon_mini_update.ps1",
+          "size": 1488,
+          "sha256": "b3a20815d71a9fffa44da9225671f8bf8b63ffda37839ad506af07e7ce3df18a",
+          "volume_index": 3
+        },
+        {
+          "relpath": "ops/daemon_nightly_report.ps1",
+          "size": 1836,
+          "sha256": "081f8c4b36d1b0bafa4acf63f7bb48c06b4732f517c6700c9b9a2d57d00d4a35",
+          "volume_index": 3
+        },
+        {
+          "relpath": "ops/daemon_nightly_train.ps1",
+          "size": 1837,
+          "sha256": "14230adffec6bb339541a77cd5bdc340a84130d369c1fb9a5222a07459ecb843",
+          "volume_index": 3
+        },
+        {
+          "relpath": "ops/daemon_te_calendar.ps1",
+          "size": 1594,
+          "sha256": "b6aa1c28a2537a7a62c5400753b3808cda49e2da9246dcee97fda9683e12beb7",
+          "volume_index": 3
+        },
+        {
+          "relpath": "ops/env.ps1",
+          "size": 477,
+          "sha256": "7f8f8712c799ddbcae988918bf77e76efcaf26b5b6f341aa0db8b61deaf08f70",
+          "volume_index": 3
+        },
+        {
+          "relpath": "ops/feature_discovery_weekly.py",
+          "size": 12396,
+          "sha256": "1a052dec5c291c18c89e71089e2d812d325605944ab5a54ee703dce9c7d80187",
+          "volume_index": 3
+        },
+        {
+          "relpath": "ops/install_all_services.ps1",
+          "size": 20200,
+          "sha256": "fc2ca65da8a8e71b1e20b398f5700084ecdd2364c42da1276653e9fa0d7a8c04",
+          "volume_index": 3
+        },
+        {
+          "relpath": "ops/install_scheduled_tasks.ps1",
+          "size": 4657,
+          "sha256": "ebea866fef83a28bbfb404aaaa7c7b61fb23bb593e7cffe95334113bfdb6eb68",
+          "volume_index": 3
+        },
+        {
+          "relpath": "ops/install_services.ps1",
+          "size": 7041,
+          "sha256": "ba831b492b9b9d5412ea4c0248c2da2e3f5c70d7b141af384356f54e4aa143bd",
+          "volume_index": 3
+        },
+        {
+          "relpath": "ops/mini_update_ppo.py",
+          "size": 9515,
+          "sha256": "cb213b7c984c2f821f6485a06f3d55e599cc04252295085e697c89e0ae21fa0d",
+          "volume_index": 3
+        },
+        {
+          "relpath": "ops/promote_challenger.py",
+          "size": 2092,
+          "sha256": "6d8b4c31879fa148a98abd2197da5782e53be719a65e3600e0d1d0ee03fb3b5d",
+          "volume_index": 3
+        },
+        {
+          "relpath": "ops/save_candidate.py",
+          "size": 1588,
+          "sha256": "938e79cc41661d818dc6d2d6817a8691646a8e545739a82d540f68542a29a794",
+          "volume_index": 3
+        },
+        {
+          "relpath": "ops/wr_cleanup.ps1",
+          "size": 618,
+          "sha256": "8db43e2c80a46044b3505c95b26cec92fec91d42569f5b0f7591edc39c0b7ba2",
+          "volume_index": 3
+        },
+        {
+          "relpath": "out_zip/repo_part_001.zip",
+          "size": 7553514,
+          "sha256": "d59c3a3b4e407df139e9a340922c2b02a3524930e8c22221b8e35fcccbc3c693",
+          "volume_index": 3
+        },
+        {
+          "relpath": "pack_repo.py",
+          "size": 8708,
+          "sha256": "5547ee5896fb203875630c710a3a312317d82abf973a76923bcf114be620ad05",
+          "volume_index": 3
+        },
+        {
+          "relpath": "paper_demo/__init__.py",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "volume_index": 3
+        },
+        {
+          "relpath": "paper_demo/decisions.csv",
+          "size": 40390,
+          "sha256": "a2f3e4ec9b18cb06c16fe13ebe04075e799199be9826e45e613709a76246798b",
+          "volume_index": 3
+        },
+        {
+          "relpath": "paper_demo/live_decisions.csv",
+          "size": 16032,
+          "sha256": "c458de15e65dac246cb2585f0f5b005bfa88e99d3f790a06d466002cd568002d",
+          "volume_index": 3
+        },
+        {
+          "relpath": "paper_demo/live_trading.log",
+          "size": 25149,
+          "sha256": "11a6a252c477d9ee74015872dff9669d8d801b6f2f7168a83721149a7a0a58cc",
+          "volume_index": 3
+        },
+        {
+          "relpath": "paper_demo/paper_loop_mt5_demo.py",
+          "size": 9735,
+          "sha256": "bd3c9e52c79c42f1cda3402ccaf740d17383acd4e685378a3c5bead4115f5d94",
+          "volume_index": 3
+        },
+        {
+          "relpath": "paper_demo/paper_trading.log",
+          "size": 103483,
+          "sha256": "ae631bc81ac40447fc8cfe6f154ebbf7b2b3f7959d7a62987c48338ca98fda93",
+          "volume_index": 3
+        },
+        {
+          "relpath": "paper_demo/simulate_execution.py",
+          "size": 1308,
+          "sha256": "1da7fe8453a5ce00ababc4fd555d85da5f8c61e854036b245924652b89afa7eb",
+          "volume_index": 3
+        },
+        {
+          "relpath": "quick_env_test.py",
+          "size": 771,
+          "sha256": "fe09014b984a900401991beb12ebcf81a0a6801cb3b0d150ab54846151a1bd82",
+          "volume_index": 3
+        },
+        {
+          "relpath": "README.md",
+          "size": 900,
+          "sha256": "011ce4e4f2e5dd83f6266a1532b20ddb61dec4b8b263d548517fd9e2cee1972e",
+          "volume_index": 3
+        },
+        {
+          "relpath": "reports/costs_suggestion.yaml",
+          "size": 74,
+          "sha256": "cf43e494cfb9d16589bb040dc4a2e6fdca43078fc9fa7761014dd27fe5cd1c08",
+          "volume_index": 3
+        },
+        {
+          "relpath": "reports/equity_val.png",
+          "size": 49677,
+          "sha256": "ffd6b6a8cdf25e057f2b8c43017991006e2a9d33d530211a4bfaa9c36e9ceeee",
+          "volume_index": 3
+        },
+        {
+          "relpath": "reports/eval_trace.csv",
+          "size": 173787,
+          "sha256": "d7c1127b295678cdd5bc2de29aaa07db2bd4b468d827153667a44c5d3954e504",
+          "volume_index": 3
+        },
+        {
+          "relpath": "reports/feature_discovery_rank.csv",
+          "size": 19046,
+          "sha256": "3d8e8288ea2637c996c9a42d27decd34ca40a64dbb08f95089e4864059b0db9b",
+          "volume_index": 3
+        },
+        {
+          "relpath": "reports/feature_discovery_summary.txt",
+          "size": 196,
+          "sha256": "87d654de126f3e85c0ec18550f8e1dfb2c6844f6f15c325ed486efed1892a54a",
+          "volume_index": 3
+        },
+        {
+          "relpath": "reports/report.html",
+          "size": 66786,
+          "sha256": "6614c923193a168ed4f96e2a6b405f6086c97485e576a1055e0250e5ba66f6a3",
+          "volume_index": 3
+        },
+        {
+          "relpath": "reports/report.txt",
+          "size": 335,
+          "sha256": "468a7d4083f338d4dfb74a93882708410efba60da185afe9e2c234ce22ac4c04",
+          "volume_index": 3
+        },
+        {
+          "relpath": "reports/val_metrics.txt",
+          "size": 71,
+          "sha256": "7dbdebba0fc04df19be7f1af1db1ec5f0d87aeec9ceac9e0699dd90d7795d362",
+          "volume_index": 3
+        },
+        {
+          "relpath": "requirements.txt",
+          "size": 187,
+          "sha256": "157307ea303624d79a09fc01dcc08fb71e0848225a000e2a9efb9efa30289d80",
+          "volume_index": 3
+        },
+        {
+          "relpath": "rl/__init__.py",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "volume_index": 3
+        },
+        {
+          "relpath": "rl/evaluate.py",
+          "size": 4227,
+          "sha256": "054c5baa663ff8f76ae39cf382e39f05ccac2d963426605b187c74c6853cff3b",
+          "volume_index": 3
+        },
+        {
+          "relpath": "rl/train_ppo.py",
+          "size": 4105,
+          "sha256": "254cc136d80f11e923d8f1eb46a3149aa6a00b1b6a66c33ce436879f3a75e599",
+          "volume_index": 3
+        },
+        {
+          "relpath": "rl/walk_forward.py",
+          "size": 5009,
+          "sha256": "b21cc26649ae2b0e5309a45ee2fa13fd9e51318e7392fe4de8c45021184847c4",
+          "volume_index": 3
+        },
+        {
+          "relpath": "save_fred_cache.py",
+          "size": 1282,
+          "sha256": "54297e052a67039911b10756f7f194d37fc003a67922e6a7dee6040249d53377",
+          "volume_index": 3
+        },
+        {
+          "relpath": "save_te_calendar_cache.py",
+          "size": 3905,
+          "sha256": "50b9cf1f212d4d9380cf9c47891d13cd6da1677c72dedd063efa3d7655eee409",
+          "volume_index": 3
+        },
+        {
+          "relpath": "utils/__init__.py",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "volume_index": 3
+        },
+        {
+          "relpath": "utils/atomic.py",
+          "size": 235,
+          "sha256": "c3ded4b476f51117f7bfb6e36353db93bfdf7b9b3a61b14ccb72c4cc7257323b",
+          "volume_index": 3
+        },
+        {
+          "relpath": "utils/calibration.py",
+          "size": 2051,
+          "sha256": "6e93d19f81382fe667a370fc9789a36176a60d9dcdb2a16f77693170070783a1",
+          "volume_index": 3
+        },
+        {
+          "relpath": "utils/make_report.py",
+          "size": 4083,
+          "sha256": "4f0e1b3b16e6e3e740b5acbbed04f1e114324921b5b310cfb3c436c9008a64f4",
+          "volume_index": 3
+        },
+        {
+          "relpath": "utils/mt5_health.py",
+          "size": 458,
+          "sha256": "b58a481ac2b77e3cfc03d415408408716857f7a7658aa2394a62d066a3ac6003",
+          "volume_index": 3
+        },
+        {
+          "relpath": "utils/qc_bars.py",
+          "size": 636,
+          "sha256": "babc1913c8d0e4220301fe73b005a5040cb2cdb58626da27ce2b1dc4d256ea77",
+          "volume_index": 3
+        },
+        {
+          "relpath": "utils/time_utils.py",
+          "size": 94,
+          "sha256": "b4977240ae02efb25addc0424f2aab50ec7e6e1fe4aa40678f89e009f14f85eb",
+          "volume_index": 3
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "relpath": ".gitattributes",
+      "size": 66,
+      "sha256": "1a1dbe176bc233b499d35a57db7513f2941c99ab9759f177830c9149be99005b",
+      "volume_index": 1
+    },
+    {
+      "relpath": "_backup_py/env_xau.py",
+      "size": 5251,
+      "sha256": "7ea9c9f5da365203393c19ca4958e70c4b12f3bd1e3f56156591a581326db973",
+      "volume_index": 1
+    },
+    {
+      "relpath": "_backup_py/fetch__mt5_data.py",
+      "size": 7671,
+      "sha256": "2004e9a9c32983af82367f413aaa43e1fd1f493db795478212c8313dd6761e1b",
+      "volume_index": 1
+    },
+    {
+      "relpath": "_backup_py/quick_env_test.py",
+      "size": 759,
+      "sha256": "d3cd8fb5a8a07ae18d3ca23ab9ed8254c508ac16789b1db7a2e048c7f765a3aa",
+      "volume_index": 1
+    },
+    {
+      "relpath": "bootstrap_pack.ps1",
+      "size": 54787,
+      "sha256": "6b1eb907d57a5132ce2d3af82adde3baeda2e7f86c08f740612fb75367927fdf",
+      "volume_index": 1
+    },
+    {
+      "relpath": "check.py",
+      "size": 182,
+      "sha256": "35f0d56e4ee2a7171df041c2beef02c0b5602936463c395d0ba0ef615d62704d",
+      "volume_index": 1
+    },
+    {
+      "relpath": "config.yaml",
+      "size": 922,
+      "sha256": "0a1a927e339d6a4bcbca9e4df5122d98b5444e110acfc2b9da2d0f0692cd5e63",
+      "volume_index": 1
+    },
+    {
+      "relpath": "data/XAUUSD_M5.csv",
+      "size": 860975,
+      "sha256": "46e42b59b884b1c77ad72391aa638e58174043e07800c3b195245a9c0aeec532",
+      "volume_index": 1
+    },
+    {
+      "relpath": "data/XAUUSD_M5_features.csv",
+      "size": 17309526,
+      "sha256": "900b8dd4137f464ba7db304d5e90c31f93fcfa5bbf644d2f9a3bf02264aaaae3",
+      "volume_index": 1
+    },
+    {
+      "relpath": "data/XAUUSD_ticks_sample.csv",
+      "size": 15260424,
+      "sha256": "4234220260e7d6978b453a7635f9683894d9a017665d6e741972b141e1167908",
+      "volume_index": 2
+    },
+    {
+      "relpath": "env_xau.py",
+      "size": 7497,
+      "sha256": "1de1f5253ee475f585f925e76c1a712fe04ccaeb124cf304258bb5b4253c3465",
+      "volume_index": 2
+    },
+    {
+      "relpath": "features/__init__.py",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "volume_index": 2
+    },
+    {
+      "relpath": "features/build_features.py",
+      "size": 11088,
+      "sha256": "f905928a40a6ffcc46a07b289c91e76c7ce91ea5c0e45f026268975d5cb9ae64",
+      "volume_index": 2
+    },
+    {
+      "relpath": "features/calendar_features.py",
+      "size": 6170,
+      "sha256": "0c97b204b029aa3db925f441307c976616aef7353654ed1a9e08de33db874794",
+      "volume_index": 2
+    },
+    {
+      "relpath": "features/discover.py",
+      "size": 5224,
+      "sha256": "629d1e351ae924675c221aeb4ac840e34574ee00ab7e485dbbf6e10666e584e3",
+      "volume_index": 2
+    },
+    {
+      "relpath": "features/fundamentals.py",
+      "size": 8880,
+      "sha256": "5bb09f7e809a3fafaf23fe48197412ab3985af617d89fbcc6a6bf5f8011fdeae",
+      "volume_index": 2
+    },
+    {
+      "relpath": "features_check.py",
+      "size": 197,
+      "sha256": "62f9ee249ebed8a04f7bb667a22b7be6faae2eea690966c3370d1679fb842a95",
+      "volume_index": 2
+    },
+    {
+      "relpath": "fetch__mt5_data.py",
+      "size": 14997,
+      "sha256": "1b04f873f2f4deab334ab986fe6eb355b0cc355f797e23afcfde85db5752c5a3",
+      "volume_index": 2
+    },
+    {
+      "relpath": "manually.py",
+      "size": 175,
+      "sha256": "1eedcfca7a882d9d9f4421e9df273c1ca34badfb0cbfdd7cce267b66a70ac7dc",
+      "volume_index": 2
+    },
+    {
+      "relpath": "merge_repo.py",
+      "size": 1681,
+      "sha256": "73aa317e302e0cecf9a22cf18b6db111cb66198935b2960828cb9cc63eb5fce4",
+      "volume_index": 2
+    },
+    {
+      "relpath": "models/best_model.zip",
+      "size": 9560873,
+      "sha256": "c5ca138051e46902c5c641dbd7e7aeecd3a0a01f551deac8d657c2528363b1c0",
+      "volume_index": 2
+    },
+    {
+      "relpath": "models/features_spec.json",
+      "size": 2421,
+      "sha256": "dbe5c0fb121f73ba47e74926e8decc7d1b7cd4a5be100421f499ca61b948cc68",
+      "volume_index": 2
+    },
+    {
+      "relpath": "models/features_spec_history.jsonl",
+      "size": 16510,
+      "sha256": "7fc68047ea7fc671de672246b2fd7c8b75a9c967d2fbba1c2842bfd71e3e0260",
+      "volume_index": 2
+    },
+    {
+      "relpath": "models/ppo_xauusd_m5.zip",
+      "size": 9560875,
+      "sha256": "01cac0b386ad57f03a02a5a453e65200830534354bd3dc6f6841ae4f156cb816",
+      "volume_index": 3
+    },
+    {
+      "relpath": "models/registry/cand_00/equity.png",
+      "size": 49677,
+      "sha256": "ffd6b6a8cdf25e057f2b8c43017991006e2a9d33d530211a4bfaa9c36e9ceeee",
+      "volume_index": 3
+    },
+    {
+      "relpath": "models/registry/cand_00/metrics.json",
+      "size": 70,
+      "sha256": "f3e94b9c3f5ac2a1228826271cbba59e9f47c71131a280e91e2b012304a105ad",
+      "volume_index": 3
+    },
+    {
+      "relpath": "models/registry/cand_00/model.zip",
+      "size": 7580018,
+      "sha256": "63fd25fcd708f8c0d2ab340529fec04fb21fc25cdec3ba9a45f6829d9e59a909",
+      "volume_index": 3
+    },
+    {
+      "relpath": "models/registry/cand_00/vecnorm.pkl",
+      "size": 70920,
+      "sha256": "d6db8cc3325641c8b311ad7b3220a5fd330f07f8f0f7bdda3bc690b563d42e80",
+      "volume_index": 3
+    },
+    {
+      "relpath": "models/registry/current.txt",
+      "size": 7,
+      "sha256": "c650c59d59e6205c6d2ef1f6cef79113b1d53c1b14b04467d762287a1ebb2a91",
+      "volume_index": 3
+    },
+    {
+      "relpath": "models/vecnorm_xauusd_m5.pkl",
+      "size": 90129,
+      "sha256": "0b3607e898e84585e85fb905566d019dcad89c95bd5396f167eecc186daa3474",
+      "volume_index": 3
+    },
+    {
+      "relpath": "ops/daemon_calibration_biweekly.ps1",
+      "size": 1551,
+      "sha256": "06e77555e106e9402b9aebb76ddef28d3d5cb85f617143984f245f3364f83692",
+      "volume_index": 3
+    },
+    {
+      "relpath": "ops/daemon_cleanup.ps1",
+      "size": 3311,
+      "sha256": "833a65bf268bbae93181347cbc1d05292705447362d0e5f2ebbfee81bdeaf504",
+      "volume_index": 3
+    },
+    {
+      "relpath": "ops/daemon_daily_report.ps1",
+      "size": 1212,
+      "sha256": "5fd93b459e1fbc83ba7435ef73c1959f5b9e7eb59d8da404fd9ed1cfca3bd0a6",
+      "volume_index": 3
+    },
+    {
+      "relpath": "ops/daemon_feature_discovery.ps1",
+      "size": 1674,
+      "sha256": "bb641cbe38a9952cb1b729364ffed3fb12c55fff13ce41d1703a717e8b60b697",
+      "volume_index": 3
+    },
+    {
+      "relpath": "ops/daemon_fetch_features.ps1",
+      "size": 1333,
+      "sha256": "c74cf425bdd3fa94d59a6917632db1c7018d7ccd1464b44cf5a289cccaae1fe4",
+      "volume_index": 3
+    },
+    {
+      "relpath": "ops/daemon_mini_update.ps1",
+      "size": 1488,
+      "sha256": "b3a20815d71a9fffa44da9225671f8bf8b63ffda37839ad506af07e7ce3df18a",
+      "volume_index": 3
+    },
+    {
+      "relpath": "ops/daemon_nightly_report.ps1",
+      "size": 1836,
+      "sha256": "081f8c4b36d1b0bafa4acf63f7bb48c06b4732f517c6700c9b9a2d57d00d4a35",
+      "volume_index": 3
+    },
+    {
+      "relpath": "ops/daemon_nightly_train.ps1",
+      "size": 1837,
+      "sha256": "14230adffec6bb339541a77cd5bdc340a84130d369c1fb9a5222a07459ecb843",
+      "volume_index": 3
+    },
+    {
+      "relpath": "ops/daemon_te_calendar.ps1",
+      "size": 1594,
+      "sha256": "b6aa1c28a2537a7a62c5400753b3808cda49e2da9246dcee97fda9683e12beb7",
+      "volume_index": 3
+    },
+    {
+      "relpath": "ops/env.ps1",
+      "size": 477,
+      "sha256": "7f8f8712c799ddbcae988918bf77e76efcaf26b5b6f341aa0db8b61deaf08f70",
+      "volume_index": 3
+    },
+    {
+      "relpath": "ops/feature_discovery_weekly.py",
+      "size": 12396,
+      "sha256": "1a052dec5c291c18c89e71089e2d812d325605944ab5a54ee703dce9c7d80187",
+      "volume_index": 3
+    },
+    {
+      "relpath": "ops/install_all_services.ps1",
+      "size": 20200,
+      "sha256": "fc2ca65da8a8e71b1e20b398f5700084ecdd2364c42da1276653e9fa0d7a8c04",
+      "volume_index": 3
+    },
+    {
+      "relpath": "ops/install_scheduled_tasks.ps1",
+      "size": 4657,
+      "sha256": "ebea866fef83a28bbfb404aaaa7c7b61fb23bb593e7cffe95334113bfdb6eb68",
+      "volume_index": 3
+    },
+    {
+      "relpath": "ops/install_services.ps1",
+      "size": 7041,
+      "sha256": "ba831b492b9b9d5412ea4c0248c2da2e3f5c70d7b141af384356f54e4aa143bd",
+      "volume_index": 3
+    },
+    {
+      "relpath": "ops/mini_update_ppo.py",
+      "size": 9515,
+      "sha256": "cb213b7c984c2f821f6485a06f3d55e599cc04252295085e697c89e0ae21fa0d",
+      "volume_index": 3
+    },
+    {
+      "relpath": "ops/promote_challenger.py",
+      "size": 2092,
+      "sha256": "6d8b4c31879fa148a98abd2197da5782e53be719a65e3600e0d1d0ee03fb3b5d",
+      "volume_index": 3
+    },
+    {
+      "relpath": "ops/save_candidate.py",
+      "size": 1588,
+      "sha256": "938e79cc41661d818dc6d2d6817a8691646a8e545739a82d540f68542a29a794",
+      "volume_index": 3
+    },
+    {
+      "relpath": "ops/wr_cleanup.ps1",
+      "size": 618,
+      "sha256": "8db43e2c80a46044b3505c95b26cec92fec91d42569f5b0f7591edc39c0b7ba2",
+      "volume_index": 3
+    },
+    {
+      "relpath": "out_zip/repo_part_001.zip",
+      "size": 7553514,
+      "sha256": "d59c3a3b4e407df139e9a340922c2b02a3524930e8c22221b8e35fcccbc3c693",
+      "volume_index": 3
+    },
+    {
+      "relpath": "pack_repo.py",
+      "size": 8708,
+      "sha256": "5547ee5896fb203875630c710a3a312317d82abf973a76923bcf114be620ad05",
+      "volume_index": 3
+    },
+    {
+      "relpath": "paper_demo/__init__.py",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "volume_index": 3
+    },
+    {
+      "relpath": "paper_demo/decisions.csv",
+      "size": 40390,
+      "sha256": "a2f3e4ec9b18cb06c16fe13ebe04075e799199be9826e45e613709a76246798b",
+      "volume_index": 3
+    },
+    {
+      "relpath": "paper_demo/live_decisions.csv",
+      "size": 16032,
+      "sha256": "c458de15e65dac246cb2585f0f5b005bfa88e99d3f790a06d466002cd568002d",
+      "volume_index": 3
+    },
+    {
+      "relpath": "paper_demo/live_trading.log",
+      "size": 25149,
+      "sha256": "11a6a252c477d9ee74015872dff9669d8d801b6f2f7168a83721149a7a0a58cc",
+      "volume_index": 3
+    },
+    {
+      "relpath": "paper_demo/paper_loop_mt5_demo.py",
+      "size": 9735,
+      "sha256": "bd3c9e52c79c42f1cda3402ccaf740d17383acd4e685378a3c5bead4115f5d94",
+      "volume_index": 3
+    },
+    {
+      "relpath": "paper_demo/paper_trading.log",
+      "size": 103483,
+      "sha256": "ae631bc81ac40447fc8cfe6f154ebbf7b2b3f7959d7a62987c48338ca98fda93",
+      "volume_index": 3
+    },
+    {
+      "relpath": "paper_demo/simulate_execution.py",
+      "size": 1308,
+      "sha256": "1da7fe8453a5ce00ababc4fd555d85da5f8c61e854036b245924652b89afa7eb",
+      "volume_index": 3
+    },
+    {
+      "relpath": "quick_env_test.py",
+      "size": 771,
+      "sha256": "fe09014b984a900401991beb12ebcf81a0a6801cb3b0d150ab54846151a1bd82",
+      "volume_index": 3
+    },
+    {
+      "relpath": "README.md",
+      "size": 900,
+      "sha256": "011ce4e4f2e5dd83f6266a1532b20ddb61dec4b8b263d548517fd9e2cee1972e",
+      "volume_index": 3
+    },
+    {
+      "relpath": "reports/costs_suggestion.yaml",
+      "size": 74,
+      "sha256": "cf43e494cfb9d16589bb040dc4a2e6fdca43078fc9fa7761014dd27fe5cd1c08",
+      "volume_index": 3
+    },
+    {
+      "relpath": "reports/equity_val.png",
+      "size": 49677,
+      "sha256": "ffd6b6a8cdf25e057f2b8c43017991006e2a9d33d530211a4bfaa9c36e9ceeee",
+      "volume_index": 3
+    },
+    {
+      "relpath": "reports/eval_trace.csv",
+      "size": 173787,
+      "sha256": "d7c1127b295678cdd5bc2de29aaa07db2bd4b468d827153667a44c5d3954e504",
+      "volume_index": 3
+    },
+    {
+      "relpath": "reports/feature_discovery_rank.csv",
+      "size": 19046,
+      "sha256": "3d8e8288ea2637c996c9a42d27decd34ca40a64dbb08f95089e4864059b0db9b",
+      "volume_index": 3
+    },
+    {
+      "relpath": "reports/feature_discovery_summary.txt",
+      "size": 196,
+      "sha256": "87d654de126f3e85c0ec18550f8e1dfb2c6844f6f15c325ed486efed1892a54a",
+      "volume_index": 3
+    },
+    {
+      "relpath": "reports/report.html",
+      "size": 66786,
+      "sha256": "6614c923193a168ed4f96e2a6b405f6086c97485e576a1055e0250e5ba66f6a3",
+      "volume_index": 3
+    },
+    {
+      "relpath": "reports/report.txt",
+      "size": 335,
+      "sha256": "468a7d4083f338d4dfb74a93882708410efba60da185afe9e2c234ce22ac4c04",
+      "volume_index": 3
+    },
+    {
+      "relpath": "reports/val_metrics.txt",
+      "size": 71,
+      "sha256": "7dbdebba0fc04df19be7f1af1db1ec5f0d87aeec9ceac9e0699dd90d7795d362",
+      "volume_index": 3
+    },
+    {
+      "relpath": "requirements.txt",
+      "size": 187,
+      "sha256": "157307ea303624d79a09fc01dcc08fb71e0848225a000e2a9efb9efa30289d80",
+      "volume_index": 3
+    },
+    {
+      "relpath": "rl/__init__.py",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "volume_index": 3
+    },
+    {
+      "relpath": "rl/evaluate.py",
+      "size": 4227,
+      "sha256": "054c5baa663ff8f76ae39cf382e39f05ccac2d963426605b187c74c6853cff3b",
+      "volume_index": 3
+    },
+    {
+      "relpath": "rl/train_ppo.py",
+      "size": 4105,
+      "sha256": "254cc136d80f11e923d8f1eb46a3149aa6a00b1b6a66c33ce436879f3a75e599",
+      "volume_index": 3
+    },
+    {
+      "relpath": "rl/walk_forward.py",
+      "size": 5009,
+      "sha256": "b21cc26649ae2b0e5309a45ee2fa13fd9e51318e7392fe4de8c45021184847c4",
+      "volume_index": 3
+    },
+    {
+      "relpath": "save_fred_cache.py",
+      "size": 1282,
+      "sha256": "54297e052a67039911b10756f7f194d37fc003a67922e6a7dee6040249d53377",
+      "volume_index": 3
+    },
+    {
+      "relpath": "save_te_calendar_cache.py",
+      "size": 3905,
+      "sha256": "50b9cf1f212d4d9380cf9c47891d13cd6da1677c72dedd063efa3d7655eee409",
+      "volume_index": 3
+    },
+    {
+      "relpath": "utils/__init__.py",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "volume_index": 3
+    },
+    {
+      "relpath": "utils/atomic.py",
+      "size": 235,
+      "sha256": "c3ded4b476f51117f7bfb6e36353db93bfdf7b9b3a61b14ccb72c4cc7257323b",
+      "volume_index": 3
+    },
+    {
+      "relpath": "utils/calibration.py",
+      "size": 2051,
+      "sha256": "6e93d19f81382fe667a370fc9789a36176a60d9dcdb2a16f77693170070783a1",
+      "volume_index": 3
+    },
+    {
+      "relpath": "utils/make_report.py",
+      "size": 4083,
+      "sha256": "4f0e1b3b16e6e3e740b5acbbed04f1e114324921b5b310cfb3c436c9008a64f4",
+      "volume_index": 3
+    },
+    {
+      "relpath": "utils/mt5_health.py",
+      "size": 458,
+      "sha256": "b58a481ac2b77e3cfc03d415408408716857f7a7658aa2394a62d066a3ac6003",
+      "volume_index": 3
+    },
+    {
+      "relpath": "utils/qc_bars.py",
+      "size": 636,
+      "sha256": "babc1913c8d0e4220301fe73b005a5040cb2cdb58626da27ce2b1dc4d256ea77",
+      "volume_index": 3
+    },
+    {
+      "relpath": "utils/time_utils.py",
+      "size": 94,
+      "sha256": "b4977240ae02efb25addc0424f2aab50ec7e6e1fe4aa40678f89e009f14f85eb",
+      "volume_index": 3
+    }
+  ]
+}
