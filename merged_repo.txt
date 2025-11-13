@@ -1,2 +1,8 @@
+2025-11-13 20:49:00,520 INFO MT5 init path=C:\Program Files\MetaTrader 5 connected=True trade_allowed=True acc_trade_allowed=True acc_trade_expert=True login=62719025
+2025-11-13 20:49:02,513 INFO NO_CHANGES: flat_no_pos
+2025-11-13 20:50:01,323 INFO NO_CHANGES: flat_no_pos
+2025-11-13 20:55:01,292 INFO NO_CHANGES: flat_no_pos
+2025-11-13 21:00:01,464 INFO NO_CHANGES: flat_no_pos
+2025-11-13 21:00:01,466 INFO [HB] GOLD.pro M5 last_ts=2025-11-13 21:00:00+00:00 price=4163.95 pos=0
 2025-11-13 21:05:01,665 INFO order_send retcode=10016 (INVALID_STOPS) |
  {'retcode': 10016, 'deal': 0, 'order': 0, 'volume': 0.0, 'price': 0.0, 'bid': 0.0, 'ask': 0.0, 'comment': 'Invalid stops', 'request_id': 0, 'retcode_external': 0, 'request': TradeRequest(action=1, magic=123456, order=0, symbol='GOLD.pro', volume=0.1, price=4163.02, stoplimit=0.0, sl=4150.941555397036, tp=4188.256889205928, deviation=10, type=1, type_filling=0, type_time=0, expiration=0, comment='Open trade', position=0, position_by=0)}
