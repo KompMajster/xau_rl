@@ -1,10 +1,674 @@
-2025-11-13 21:19:16,397 INFO MT5 init path=C:\Program Files\MetaTrader 5 connected=True trade_allowed=True acc_trade_allowed=True acc_trade_expert=True login=62719025
-2025-11-13 21:25:01,622 INFO order_send retcode=10030 (INVALID_FILL) | 
- {'retcode': 10030, 'deal': 0, 'order': 0, 'volume': 0.0, 'price': 0.0, 'bid': 0.0, 'ask': 0.0, 'comment': 'Unsupported filling mode', 'request_id': 0, 'retcode_external': 0, 'request': TradeRequest(action=1, magic=123456, order=0, symbol='GOLD.pro', volume=0.1, price=4165.31, stoplimit=0.0, sl=0.0, tp=0.0, deviation=10, type=1, type_filling=2, type_time=0, expiration=0, comment='Close position', position=131021115, position_by=0)}
-2025-11-13 21:25:01,623 INFO order_send retcode=10030 (INVALID_FILL) | 
- {'retcode': 10030, 'deal': 0, 'order': 0, 'volume': 0.0, 'price': 0.0, 'bid': 0.0, 'ask': 0.0, 'comment': 'Unsupported filling mode', 'request_id': 0, 'retcode_external': 0, 'request': TradeRequest(action=1, magic=123456, order=0, symbol='GOLD.pro', volume=0.1, price=4165.31, stoplimit=0.0, sl=4165.84, tp=4165.31, deviation=10, type=1, type_filling=2, type_time=0, expiration=0, comment='Open trade', position=0, position_by=0)}
-2025-11-13 21:25:01,631 INFO order_send retcode=10009 (DONE) | 
- {'retcode': 10009, 'deal': 88378550, 'order': 131022343, 'volume': 0.1, 'price': 4165.31, 'bid': 4165.31, 'ask': 4165.84, 'comment': 'Request executed', 'request_id': 2449096332, 'retcode_external': 0, 'request': TradeRequest(action=1, magic=123456, order=0, symbol='GOLD.pro', volume=0.1, price=4165.31, stoplimit=0.0, sl=4165.84, tp=4165.31, deviation=10, type=1, type_filling=0, type_time=0, expiration=0, comment='Open trade', position=0, position_by=0)}
-2025-11-13 21:25:01,631 INFO order_send retcode=10016 (INVALID_STOPS) | 
- {'retcode': 10016, 'deal': 0, 'order': 0, 'volume': 0.0, 'price': 0.0, 'bid': 0.0, 'ask': 0.0, 'comment': 'Invalid stops', 'request_id': 0, 'retcode_external': 0, 'request': TradeRequest(action=6, magic=123456, order=0, symbol='GOLD.pro', volume=0.0, price=0.0, stoplimit=0.0, sl=4165.84, tp=4165.31, deviation=0, type=0, type_filling=0, type_time=0, expiration=0, comment='Modify SLTP', position=131021115, position_by=0)}
-2025-11-13 21:25:01,633 INFO [HB] GOLD.pro M5 last_ts=2025-11-13 21:25:00+00:00 price=4165.31 pos=2
+# -*- coding: utf-8 -*-
+"""
+Paper Trading Loop (MT5) – PPO [LIVE-SAFE]
+- Inicjalizacja MT5 do konkretnej instancji + weryfikacja uprawnień.
+- Cechy LIVE (baza + lagi) zgodne z treningiem i spec (preferencja: features_spec_live.json).
+- Domyślnie ORDER_FILLING_FOK + fallback IOC -> RETURN (usuwa INVALID_FILL).
+- SL/TP: poprawna strona rynku, bufor vs min. dystans brokera, normalizacja do digits;
+  fallback: open bez SL/TP -> modify SLTP.
+- Atomowy FLIP: CLOSE z potwierdzeniem -> dopiero OPEN (bez piramidowania).
+- CSV decyzji + bogate logi (w tym diagnostyka przy retcode 10016/10030).
+"""
+
+import os
+import time
+import json
+import pickle
+import logging
+from pathlib import Path
+from datetime import time as dtime
+
+import MetaTrader5 as mt5
+import numpy as np
+import pandas as pd
+import yaml
+from stable_baselines3 import PPO
+
+# ─────────────────────────────
+# Logi i ścieżki
+# ─────────────────────────────
+LOG_DIR = Path("paper_demo")
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+logging.basicConfig(
+    filename=str(LOG_DIR / "live_trading.log"),
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+
+cfg = yaml.safe_load(open("config.yaml", "r", encoding="utf-8"))
+SYMBOL = cfg["symbol"]
+WINDOW = int(cfg.get("window", 128))
+MODEL_PATH = cfg["files"]["model_path"]
+VECNORM_PATH = cfg.get("files", {}).get("vecnorm_path", "models/vecnorm_xauusd_m5.pkl")
+
+TF_MAP = {
+    "M1": mt5.TIMEFRAME_M1,
+    "M5": mt5.TIMEFRAME_M5,
+    "M15": mt5.TIMEFRAME_M15,
+}
+TF_NAME = cfg.get("timeframe", "M5")
+TF = TF_MAP.get(TF_NAME, mt5.TIMEFRAME_M5)
+
+ENV = cfg.get("env", {}) or {}
+MIN_EQUITY = float(ENV.get("min_equity", 0.8))
+TRADE_HOURS = ENV.get("trade_hours_utc", None)          # np. ["06:00","20:55"]
+ALLOW_CLOSE_OUTSIDE = bool(ENV.get("allow_close_outside_hours", True))
+SLIPPAGE_PTS = int(ENV.get("slippage", 10))
+MAGIC = int(ENV.get("magic", 123456))
+SLEEP_SEC = int(ENV.get("sleep_sec", 30))
+
+# Zaawansowane (można stroić w config.yaml→env)
+SLTP_BUFFER_FACTOR = float(ENV.get("sltp_buffer_factor", 1.25))  # mnożnik nad minimalnym dystansem
+ALLOW_INLINE_STOPS = bool(ENV.get("allow_inline_stops", True))   # jeśli False → zawsze open->modify
+NORMALIZE_TO_DIGITS = bool(ENV.get("normalize_to_digits", True))
+
+# MT5 EXE (możesz nadpisać zmienną środowiskową):
+MT5_EXE = os.getenv("MT5_EXE", r"C:\Program Files\MetaTrader 5\terminal64.exe")
+
+RET = {
+    10008: "PLACED", 10009: "DONE", 10010: "DONE_PARTIAL",
+    10013: "INVALID", 10014: "INVALID_VOLUME", 10015: "INVALID_PRICE",
+    10016: "INVALID_STOPS", 10017: "TRADE_DISABLED", 10018: "MARKET_CLOSED",
+    10019: "NO_MONEY", 10020: "PRICE_CHANGED", 10021: "PRICE_OFF",
+    10022: "INVALID_EXP", 10023: "ORDER_CHANGED", 10024: "TOO_MANY_REQUESTS",
+    10025: "NO_CHANGES", 10026: "SERVER_DISABLES_AT", 10027: "CLIENT_DISABLES_AT",
+    10028: "LOCKED", 10029: "FROZEN", 10030: "INVALID_FILL", 10031: "CONNECTION",
+}
+
+# ─────────────────────────────
+# MT5 helpers
+# ─────────────────────────────
+def init_mt5(strict: bool = True):
+    try:
+        mt5.shutdown()
+    except Exception:
+        pass
+    if not mt5.initialize(path=MT5_EXE):
+        raise RuntimeError(f"mt5.initialize() failed: {mt5.last_error()} (path={MT5_EXE})")
+    ti = mt5.terminal_info()
+    ai = mt5.account_info()
+    logging.info(
+        "MT5 init path=%s connected=%s trade_allowed=%s acc_trade_allowed=%s acc_trade_expert=%s login=%s",
+        getattr(ti, "path", None), getattr(ti, "connected", None),
+        getattr(ti, "trade_allowed", None), getattr(ai, "trade_allowed", None),
+        getattr(ai, "trade_expert", None), getattr(ai, "login", None),
+    )
+    if strict:
+        if not getattr(ti, "trade_allowed", False):
+            raise RuntimeError("Terminal trade_allowed=False. Włącz 'Algo Trading' lub wskaż właściwy MT5_EXE.")
+        if not getattr(ai, "trade_allowed", False) or not getattr(ai, "trade_expert", False):
+            raise RuntimeError("Konto nie pozwala na handel algorytmiczny (ACCOUNT_TRADE_ALLOWED/EXPERT=False).")
+    return ti, ai
+
+
+def in_trade_hours(ts_utc: pd.Timestamp) -> bool:
+    if not TRADE_HOURS or len(TRADE_HOURS) != 2:
+        return True
+    try:
+        sh, sm = [int(x) for x in TRADE_HOURS[0].split(":")]
+        eh, em = [int(x) for x in TRADE_HOURS[1].split(":")]
+        start = dtime(sh, sm); end = dtime(eh, em)
+        t = ts_utc.to_pydatetime().time()
+        return start <= t <= end if start <= end else (t >= start or t <= end)
+    except Exception:
+        return True
+
+
+def ensure_symbol_visible(symbol: str):
+    si = mt5.symbol_info(symbol)
+    if si and not si.visible:
+        mt5.symbol_select(symbol, True)
+
+
+def get_last_bars(symbol, timeframe, n):
+    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, n)
+    if rates is None or len(rates) < n:
+        return None
+    df = pd.DataFrame(rates)
+    df["time"] = pd.to_datetime(df["time"], unit="s", utc=True)
+    if "real_volume" in df.columns:
+        df.rename(columns={"real_volume": "tick_volume"}, inplace=True)
+    return df[["time", "open", "high", "low", "close", "tick_volume", "spread"]]
+
+
+def get_symbol_trade_constraints(symbol: str):
+    info = mt5.symbol_info(symbol)
+    if not info:
+        return None
+    digits = int(getattr(info, "digits", 2))
+    point = float(getattr(info, "point", 0.01))
+    stops_level = int(getattr(info, "trade_stops_level", 0))
+    stops_distance = int(getattr(info, "trade_stops_distance", 0))
+    min_pts = max(stops_level, stops_distance)
+    return {
+        "digits": digits,
+        "point": point,
+        "stops_level": stops_level,
+        "stops_distance": stops_distance,
+        "min_dist_price": float(min_pts * point),
+    }
+
+
+def normalize_price(x: float, digits: int) -> float:
+    if x is None:
+        return None
+    if not NORMALIZE_TO_DIGITS:
+        return float(x)
+    return float(f"{x:.{digits}f}")
+
+
+# ─────────────────────────────
+# Cechy LIVE (baza + lagi)
+# ─────────────────────────────
+def add_features_incremental(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.sort_values("time").reset_index(drop=True)
+    c = df["close"]
+    df["ret1"] = np.log(c).diff()
+    df["ema10"] = c.ewm(span=10).mean()
+    df["ema50"] = c.ewm(span=50).mean()
+    df["ema200"] = c.ewm(span=200).mean()
+    d = c.diff()
+    up = d.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
+    down = (-d.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
+    rs = up / (down + 1e-12)
+    df["rsi14"] = 100 - (100 / (1 + rs))
+    h, l, cl = df["high"], df["low"], df["close"]
+    tr = np.maximum(h - l, np.maximum((h - cl.shift()).abs(), (l - cl.shift()).abs()))
+    df["atr14"] = tr.ewm(alpha=1/14, adjust=False).mean()
+    ema_f = c.ewm(span=12).mean(); ema_s = c.ewm(span=26).mean()
+    macd = ema_f - ema_s; sig = macd.ewm(span=9).mean()
+    df["macd"] = macd; df["macd_signal"] = sig; df["macd_hist"] = macd - sig
+    ma = c.rolling(20).mean(); sd = c.rolling(20).std()
+    df["bb_ma"] = ma; df["bb_up"] = ma + 2*sd; df["bb_lo"] = ma - 2*sd
+    df["bb_width"] = (df["bb_up"] - df["bb_lo"]) / (ma.replace(0, np.nan).abs() + 1e-12)
+    df["close_log"] = np.log(c.clip(lower=1e-12))
+    mu = df["close_log"].rolling(2000, min_periods=200).mean()
+    s = df["close_log"].rolling(2000, min_periods=200).std().replace(0, np.nan)
+    df["close_norm"] = (df["close_log"] - mu) / (s + 1e-8)
+    return df.dropna().reset_index(drop=True)
+
+
+def add_lags_live(df: pd.DataFrame, cols: list, max_lag: int) -> pd.DataFrame:
+    if max_lag <= 0 or not cols:
+        return df
+    out = df
+    for L in range(1, max_lag + 1):
+        blk = df[cols].shift(L)
+        blk.columns = [f"{c}_lag{L}" for c in cols]
+        out = pd.concat([out, blk], axis=1)
+    return out
+
+
+def load_spec():
+    live_p = Path("models/features_spec_live.json")
+    full_p = Path("models/features_spec.json")
+    if live_p.exists():
+        return json.loads(live_p.read_text(encoding="utf-8")), True
+    if full_p.exists():
+        return json.loads(full_p.read_text(encoding="utf-8")), False
+    raise RuntimeError("Brak features_spec*.json – uruchom feature discovery.")
+
+
+def build_obs(df_bars: pd.DataFrame, model_obs_dim: int):
+    spec, _ = load_spec()
+    feat = add_features_incremental(df_bars)
+    max_lag = int(spec.get("max_lag", 0))
+    base_needed = sorted({c.split("_lag")[0] for c in spec.get("feature_columns", [])})
+    avail_bases = [c for c in base_needed if c in feat.columns]
+    feat = add_lags_live(feat, avail_bases, max_lag)
+
+    full_list = spec.get("feature_columns", [])
+    available = [c for c in full_list if c in feat.columns]
+    missing = [c for c in full_list if c not in feat.columns]
+    per_step = max(1, (model_obs_dim - 2) // WINDOW)
+
+    ordered = (available + missing)[:per_step]
+    tail = feat.tail(WINDOW)
+    block_cols, zero_filled = [], 0
+    for col in ordered:
+        if col in tail.columns:
+            block_cols.append(tail[col].to_numpy(dtype=np.float32))
+        else:
+            block_cols.append(np.zeros(WINDOW, dtype=np.float32))
+            zero_filled += 1
+    while len(block_cols) < per_step:
+        block_cols.append(np.zeros(WINDOW, dtype=np.float32))
+        zero_filled += 1
+
+    block = np.stack(block_cols, axis=1) if block_cols else np.zeros((WINDOW, 1), dtype=np.float32)
+    flat = block.flatten()
+    obs = np.concatenate([flat, np.array([0.0, 0.0], dtype=np.float32)])
+    matched = len(available)
+    return obs, matched, zero_filled, spec
+
+
+# ─────────────────────────────
+# Trading helpers (lot, stops, filling)
+# ─────────────────────────────
+def normalize_lot(symbol, lot: float) -> float:
+    info = mt5.symbol_info(symbol)
+    if not info:
+        return lot
+    lot = max(info.volume_min, min(info.volume_max, lot))
+    steps = round(lot / info.volume_step)
+    adj = steps * info.volume_step
+    return float(f"{adj:.2f}")
+
+
+def dynamic_lot(equity):
+    return max(0.01, round(equity / 500000, 2))
+
+
+def calc_sl_tp(price, atr):
+    sl = price - 2 * atr if atr else None
+    tp = price + 4 * atr if atr else None
+    return sl, tp
+
+
+def clamp_stops_to_constraints(action: int,
+                               cur_bid: float, cur_ask: float,
+                               sl: float, tp: float,
+                               min_dist_price: float,
+                               digits: int,
+                               buffer_factor: float):
+    buf = buffer_factor * min_dist_price
+    if action == 2:  # BUY
+        if sl is not None:
+            sl = min(sl, cur_bid - buf)
+        if tp is not None:
+            tp = max(tp, cur_ask + buf)
+    elif action == 0:  # SELL
+        if sl is not None:
+            sl = max(sl, cur_ask + buf)
+        if tp is not None:
+            tp = min(tp, cur_bid - buf)
+    # sanity „ostatniej chwili”
+    if action == 2:
+        if sl is not None and sl >= cur_bid: sl = cur_bid - buf
+        if tp is not None and tp <= cur_ask: tp = cur_ask + buf
+    else:
+        if sl is not None and sl <= cur_ask: sl = cur_ask + buf
+        if tp is not None and tp >= cur_bid: tp = cur_bid - buf
+
+    return normalize_price(sl, digits), normalize_price(tp, digits)
+
+
+def order_send(req: dict):
+    res = mt5.order_send(req)
+    code = getattr(res, "retcode", None)
+    name = RET.get(code, str(code))
+    try:
+        logging.info("order_send retcode=%s (%s) | \n %s", code, name, res._asdict())
+    except Exception:
+        logging.info("order_send retcode=%s (%s)", code, name)
+    return res
+
+
+def log_symbol_constraints(tag: str, cons: dict, cur_bid: float, cur_ask: float, sl, tp):
+    if not cons:
+        return
+    digits = cons["digits"]; pt = cons["point"]
+    min_pts_level = cons["stops_level"]; min_pts_dist = cons["stops_distance"]
+    min_dist = cons["min_dist_price"]
+    def dist(a, b): 
+        return None if a is None or b is None else (abs(a - b), abs(a - b)/pt if pt else None)
+    d_sl_buy = dist(cur_bid, sl)
+    d_tp_buy = dist(tp, cur_ask)
+    logging.info(
+        "[%s] constraints: digits=%s point=%.6f stops_level=%s stops_distance=%s min_dist_price=%.6f | "
+        "dists(buy): |bid-sl|=%s (%s pt), |tp-ask|=%s (%s pt)",
+        tag, digits, pt, min_pts_level, min_pts_dist, min_dist,
+        None if not d_sl_buy else f"{d_sl_buy[0]:.5f}", None if not d_sl_buy else f"{d_sl_buy[1]:.1f}",
+        None if not d_tp_buy else f"{d_tp_buy[0]:.5f}", None if not d_tp_buy else f"{d_tp_buy[1]:.1f}",
+    )
+
+
+def open_market(action: int, lot: float, price: float, sl: float, tp: float, send_stops_inline: bool):
+    """
+    Próbuje najpierw FOK, potem IOC, na końcu RETURN.
+    action: 2=BUY, 0=SELL.
+    """
+    req = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": SYMBOL,
+        "type": mt5.ORDER_TYPE_BUY if action == 2 else mt5.ORDER_TYPE_SELL,
+        "volume": lot,
+        "price": price,
+        "deviation": SLIPPAGE_PTS,
+        "magic": MAGIC,
+        "comment": "Open trade",
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": mt5.ORDER_FILLING_FOK,  # domyślnie FOK (ważne dla GOLD.pro)
+    }
+    if send_stops_inline:
+        if sl is not None: req["sl"] = sl
+        if tp is not None: req["tp"] = tp
+
+    res = order_send(req)
+    code = getattr(res, "retcode", None)
+
+    if code == 10030:  # INVALID_FILL → fallback sekwencją
+        for fm in (getattr(mt5, "ORDER_FILLING_IOC", None), getattr(mt5, "ORDER_FILLING_RETURN", None)):
+            if fm is None:
+                continue
+            req["type_filling"] = fm
+            res = order_send(req)
+            code = getattr(res, "retcode", None)
+            if code != 10030:
+                break
+    return res
+
+
+def close_position_with_fallback(p, cur_bid: float, cur_ask: float):
+    """CLOSE z sekwencją filling: FOK -> IOC -> RETURN. Zwraca wynik order_send."""
+    def _req(fill):
+        return {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "position": p.ticket,
+            "symbol": SYMBOL,
+            "type": mt5.ORDER_TYPE_SELL if p.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY,
+            "volume": p.volume,
+            "price": cur_bid if p.type == mt5.ORDER_TYPE_BUY else cur_ask,
+            "deviation": SLIPPAGE_PTS,
+            "magic": MAGIC,
+            "comment": "Close position",
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": fill,
+        }
+    for fill in (mt5.ORDER_FILLING_FOK,
+                 getattr(mt5, "ORDER_FILLING_IOC", None),
+                 getattr(mt5, "ORDER_FILLING_RETURN", None)):
+        if fill is None:
+            continue
+        res = order_send(_req(fill))
+        if getattr(res, "retcode", None) not in (10030, None):  # nie INVALID_FILL
+            return res
+    return res  # ostatni wynik (prawdopodobnie 10030)
+
+
+def modify_sl_tp(ticket: int, sl: float, tp: float):
+    req = {
+        "action": mt5.TRADE_ACTION_SLTP,
+        "position": ticket,
+        "sl": sl if sl is not None else 0.0,
+        "tp": tp if tp is not None else 0.0,
+        "symbol": SYMBOL,
+        "magic": MAGIC,
+        "comment": "Modify SLTP",
+    }
+    return order_send(req)
+
+
+def positions_by_magic(symbol, magic):
+    pos = mt5.positions_get(symbol=symbol)
+    if not pos:
+        return []
+    return [p for p in pos if getattr(p, "magic", 0) == magic]
+
+
+# ─────────────────────────────
+# Main loop
+# ─────────────────────────────
+def main():
+    LOCK = LOG_DIR / "live.lock"
+    if LOCK.exists():
+        raise SystemExit("Inna instancja już działa (lock file).")
+    LOCK.write_text(str(os.getpid()), encoding="utf-8")
+
+    try:
+        init_mt5(strict=True)
+        ensure_symbol_visible(SYMBOL)
+
+        model = PPO.load(MODEL_PATH)
+        expected_dim = int(model.observation_space.shape[0])
+
+        class _IdentityVec:
+            training = False
+            norm_reward = False
+
+            @staticmethod
+            def normalize_obs(x):
+                return x
+
+        if Path(VECNORM_PATH).exists():
+            try:
+                with open(VECNORM_PATH, "rb") as f:
+                    vecnorm = pickle.load(f)
+                vecnorm.training = False
+                vecnorm.norm_reward = False
+            except Exception as e:
+                logging.warning("VecNormalize load failed (%s) – używam tożsamości.", e)
+                vecnorm = _IdentityVec()
+        else:
+            logging.info("Brak VecNormalize – używam tożsamości.")
+            vecnorm = _IdentityVec()
+
+        csv = LOG_DIR / "live_decisions.csv"
+        if not csv.exists():
+            csv.write_text(
+                "time_utc,price,action_id,action_label,equity,lot,sl,tp,retcode,retcode_name,"
+                "matched_features,zero_filled,spec_id,pos_count_before,pos_count_after,reason\n",
+                encoding="utf-8",
+            )
+
+        last_ts = None
+        hb_t = time.time()
+
+        while True:
+            bars = get_last_bars(SYMBOL, TF, n=WINDOW + 800)
+            if bars is None or len(bars) < WINDOW + 200:
+                time.sleep(5)
+                continue
+
+            try:
+                obs, matched, zero_filled, spec = build_obs(bars, expected_dim)
+            except Exception as e:
+                logging.exception("build_obs failed: %s", e)
+                time.sleep(5)
+                continue
+
+            feat = add_features_incremental(bars)
+            cur_ts = feat["time"].iloc[-1]
+
+            if last_ts is not None and cur_ts == last_ts:
+                time.sleep(2)
+                continue
+
+            obs_n = vecnorm.normalize_obs(obs.reshape(1, -1)).reshape(-1)
+            action, _ = model.predict(obs_n, deterministic=True)
+            action = int(action)
+            decision = {0: "SHORT", 1: "FLAT", 2: "LONG"}.get(action, "FLAT")
+
+            info = mt5.symbol_info(SYMBOL)
+            if not info:
+                logging.warning("symbol_info unavailable – skip.")
+                time.sleep(SLEEP_SEC)
+                continue
+            cons = get_symbol_trade_constraints(SYMBOL) or {"min_dist_price": 0.0, "digits": int(getattr(info, "digits", 2))}
+            digits = int(cons.get("digits", int(getattr(info, "digits", 2))))
+
+            tick = mt5.symbol_info_tick(SYMBOL)
+            cur_bid, cur_ask = float(tick.bid), float(tick.ask)
+            equity = float(mt5.account_info().equity)
+            lot = normalize_lot(SYMBOL, dynamic_lot(equity))
+            atr = float(feat["atr14"].iloc[-1]) if "atr14" in feat.columns else None
+
+            price = cur_ask if action == 2 else cur_bid
+            sl, tp = calc_sl_tp(price, atr)
+            sl, tp = clamp_stops_to_constraints(action, cur_bid, cur_ask, sl, tp,
+                                                float(cons["min_dist_price"]), digits, SLTP_BUFFER_FACTOR)
+            price = normalize_price(price, digits)
+
+            pos_list = positions_by_magic(SYMBOL, MAGIC)
+            pos_before = len(pos_list)
+            reason = "executed"
+            retcode = 10025
+            retname = RET[10025]
+            pos_after = pos_before
+
+            outside_hours = not in_trade_hours(cur_ts)
+
+            # 1) Equity guard: CLOSE allowed, OPEN blocked
+            if equity < MIN_EQUITY * float(mt5.account_info().balance):
+                if pos_before:
+                    if action == 1:  # FLAT -> CLOSE
+                        p = pos_list[0]
+                        res = close_position_with_fallback(p, cur_bid, cur_ask)
+                        retcode = getattr(res, "retcode", None); retname = RET.get(retcode, str(retcode))
+                        pos_after = len(positions_by_magic(SYMBOL, MAGIC))
+                    else:
+                        # flip -> CLOSE only
+                        p = pos_list[0]
+                        _ = close_position_with_fallback(p, cur_bid, cur_ask)
+                        reason = "equity_guard_flip_close_only"
+                        pos_after = len(positions_by_magic(SYMBOL, MAGIC))
+                else:
+                    reason = "equity_guard_no_pos"
+
+            # 2) Poza godzinami: CLOSE allowed, OPEN blocked
+            elif outside_hours and ALLOW_CLOSE_OUTSIDE:
+                if not pos_before:
+                    reason = "outside_hours_flat_no_pos"
+                else:
+                    if action == 1:
+                        p = pos_list[0]
+                        res = close_position_with_fallback(p, cur_bid, cur_ask)
+                        retcode = getattr(res, "retcode", None); retname = RET.get(retcode, str(retcode))
+                        pos_after = len(positions_by_magic(SYMBOL, MAGIC))
+                    else:
+                        p = pos_list[0]
+                        _ = close_position_with_fallback(p, cur_bid, cur_ask)
+                        reason = "outside_hours_flip_close_only"
+                        pos_after = len(positions_by_magic(SYMBOL, MAGIC))
+
+            # 3) Godziny handlu – pełna polityka
+            else:
+                if action == 1:  # FLAT
+                    if pos_before:
+                        p = pos_list[0]
+                        res = close_position_with_fallback(p, cur_bid, cur_ask)
+                        retcode = getattr(res, "retcode", None); retname = RET.get(retcode, str(retcode))
+                        pos_after = len(positions_by_magic(SYMBOL, MAGIC))
+                    else:
+                        reason = "flat_no_pos"
+                else:
+                    desired_long = (action == 2)
+
+                    if not pos_before:
+                        # czy wysyłać inline SL/TP?
+                        send_inline = ALLOW_INLINE_STOPS
+                        if cons["min_dist_price"] > 0.0:
+                            if desired_long:
+                                if (sl is not None and sl >= (cur_bid - cons["min_dist_price"])) or \
+                                   (tp is not None and tp <= (cur_ask + cons["min_dist_price"])):
+                                    send_inline = False
+                            else:
+                                if (sl is not None and sl <= (cur_ask + cons["min_dist_price"])) or \
+                                   (tp is not None and tp >= (cur_bid - cons["min_dist_price"])):
+                                    send_inline = False
+
+                        # zapamiętaj tickety przed
+                        tickets_before = [p.ticket for p in positions_by_magic(SYMBOL, MAGIC)]
+                        res = open_market(action, lot, price, sl, tp, send_inline)
+                        retcode = getattr(res, "retcode", None); retname = RET.get(retcode, str(retcode))
+
+                        # fallback: INVALID_STOPS przy inline -> otwórz bez SL/TP
+                        if retcode == 10016 and send_inline:
+                            log_symbol_constraints("OPEN_INVALID_STOPS", cons, cur_bid, cur_ask, sl, tp)
+                            logging.info("Fallback: open WITHOUT SL/TP po INVALID_STOPS.")
+                            res = open_market(action, lot, price, None, None, False)
+                            retcode = getattr(res, "retcode", None); retname = RET.get(retcode, str(retcode))
+
+                        pos_after = len(positions_by_magic(SYMBOL, MAGIC))
+
+                        # jeśli open OK -> modify SLTP NA NOWYM TICKIECIE
+                        if retcode in (10008, 10009, 10010) and (sl is not None or tp is not None):
+                            pls = positions_by_magic(SYMBOL, MAGIC)
+                            tickets_after = [p.ticket for p in pls]
+                            new_tickets = list(set(tickets_after) - set(tickets_before))
+                            ticket = new_tickets[0] if new_tickets else (pls[-1].ticket if pls else None)
+                            if ticket:
+                                res_mod = modify_sl_tp(ticket, sl, tp)
+                                if getattr(res_mod, "retcode", None) == 10016:
+                                    log_symbol_constraints("MODIFY_INVALID_STOPS", cons, cur_bid, cur_ask, sl, tp)
+                    else:
+                        # FLIP: najpierw CLOSE z potwierdzeniem -> dopiero OPEN
+                        p = pos_list[0]
+                        res_c = close_position_with_fallback(p, cur_bid, cur_ask)
+                        rc_c = getattr(res_c, "retcode", None)
+                        if rc_c in (10009, 10010):
+                            # odśwież tick
+                            t2 = mt5.symbol_info_tick(SYMBOL)
+                            price2 = float(t2.ask) if desired_long else float(t2.bid)
+                            price2 = normalize_price(price2, int(cons["digits"]))
+                            # OPEN (inline / bez – wg warunków)
+                            send_inline = ALLOW_INLINE_STOPS
+                            if cons["min_dist_price"] > 0.0:
+                                if desired_long:
+                                    if (sl is not None and sl >= (t2.bid - cons["min_dist_price"])) or \
+                                       (tp is not None and tp <= (t2.ask + cons["min_dist_price"])):
+                                        send_inline = False
+                                else:
+                                    if (sl is not None and sl <= (t2.ask + cons["min_dist_price"])) or \
+                                       (tp is not None and tp >= (t2.bid - cons["min_dist_price"])):
+                                        send_inline = False
+                            tickets_before = [pp.ticket for pp in positions_by_magic(SYMBOL, MAGIC)]
+                            res_o = open_market(action, lot, price2, sl, tp, send_inline)
+                            retcode = getattr(res_o, "retcode", None); retname = RET.get(retcode, str(retcode))
+                            if retcode == 10016 and send_inline:
+                                log_symbol_constraints("OPEN_INVALID_STOPS_FLIP", cons, t2.bid, t2.ask, sl, tp)
+                                res_o = open_market(action, lot, price2, None, None, False)
+                                retcode = getattr(res_o, "retcode", None); retname = RET.get(retcode, str(retcode))
+                            pos_after = len(positions_by_magic(SYMBOL, MAGIC))
+                            if retcode in (10008, 10009, 10010) and (sl is not None or tp is not None):
+                                pls = positions_by_magic(SYMBOL, MAGIC)
+                                tickets_after = [pp.ticket for pp in pls]
+                                new_tickets = list(set(tickets_after) - set(tickets_before))
+                                ticket = new_tickets[0] if new_tickets else (pls[-1].ticket if pls else None)
+                                if ticket:
+                                    res_mod = modify_sl_tp(ticket, sl, tp)
+                                    if getattr(res_mod, "retcode", None) == 10016:
+                                        log_symbol_constraints("MODIFY_INVALID_STOPS_FLIP", cons, t2.bid, t2.ask, sl, tp)
+                        else:
+                            logging.info("Flip aborted: close failed retcode=%s", rc_c)
+                            retcode = rc_c; retname = RET.get(rc_c, str(rc_c))
+                            pos_after = len(positions_by_magic(SYMBOL, MAGIC))
+
+            # CSV
+            try:
+                with csv.open("a", encoding="utf-8") as f:
+                    f.write(
+                        f"{cur_ts},{price:.5f},{action},{decision},{equity:.2f},{lot:.2f},"
+                        f"{sl},{tp},{retcode},{retname},{matched},{zero_filled},"
+                        f"{spec.get('spec_id','unknown')},{pos_before},{pos_after},{reason}\n"
+                    )
+            except Exception as e:
+                logging.warning("CSV append failed: %s", e)
+
+            # diagnostyka przy retcode'ach
+            if retcode in (10016, 10030):
+                log_symbol_constraints("RET_DIAG", cons, cur_bid, cur_ask, sl, tp)
+
+            last_ts = cur_ts
+
+            # Heartbeat co ~10 min
+            if time.time() - hb_t > 600:
+                logging.info("[HB] %s %s last_ts=%s price=%.2f pos=%d",
+                             SYMBOL, TF_NAME, cur_ts, price, pos_after)
+                hb_t = time.time()
+
+            time.sleep(SLEEP_SEC)
+
+    finally:
+        try:
+            mt5.shutdown()
+        except Exception:
+            pass
+        try:
+            (LOG_DIR / "live.lock").unlink()
+        except Exception:
+            pass
+
+
+if __name__ == "__main__":
+    main()
