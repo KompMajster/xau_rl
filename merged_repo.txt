@@ -1,13 +1,511 @@
-2025-11-13 21:34:48,779 INFO MT5 init path=C:\Program Files\MetaTrader 5 connected=True trade_allowed=True acc_trade_allowed=True acc_trade_expert=True login=62719025
-2025-11-13 21:34:50,938 INFO order_send retcode=10009 (DONE) | 
- {'retcode': 10009, 'deal': 88379193, 'order': 131023423, 'volume': 0.1, 'price': 4167.37, 'bid': 4167.37, 'ask': 4167.93, 'comment': 'Request executed', 'request_id': 2449096334, 'retcode_external': 0, 'request': TradeRequest(action=1, magic=123456, order=0, symbol='GOLD.pro', volume=0.1, price=4167.37, stoplimit=0.0, sl=0.0, tp=0.0, deviation=10, type=1, type_filling=0, type_time=0, expiration=0, comment='Close position', position=131021115, position_by=0)}
-2025-11-13 21:34:50,946 INFO order_send retcode=10009 (DONE) | 
- {'retcode': 10009, 'deal': 88379194, 'order': 131023424, 'volume': 0.1, 'price': 4167.37, 'bid': 4167.37, 'ask': 4167.93, 'comment': 'Request executed', 'request_id': 2449096335, 'retcode_external': 0, 'request': TradeRequest(action=1, magic=123456, order=0, symbol='GOLD.pro', volume=0.1, price=4167.37, stoplimit=0.0, sl=4167.93, tp=4167.37, deviation=10, type=1, type_filling=0, type_time=0, expiration=0, comment='Open trade', position=0, position_by=0)}
-2025-11-13 21:34:50,947 INFO order_send retcode=10025 (NO_CHANGES) | 
- {'retcode': 10025, 'deal': 0, 'order': 0, 'volume': 0.0, 'price': 0.0, 'bid': 0.0, 'ask': 0.0, 'comment': 'No changes', 'request_id': 0, 'retcode_external': 0, 'request': TradeRequest(action=6, magic=123456, order=0, symbol='GOLD.pro', volume=0.0, price=0.0, stoplimit=0.0, sl=4167.93, tp=4167.37, deviation=0, type=0, type_filling=0, type_time=0, expiration=0, comment='Modify SLTP', position=131023424, position_by=0)}
-2025-11-13 21:35:20,993 INFO order_send retcode=10009 (DONE) | 
- {'retcode': 10009, 'deal': 88379252, 'order': 131023499, 'volume': 0.1, 'price': 4167.12, 'bid': 4167.12, 'ask': 4167.64, 'comment': 'Request executed', 'request_id': 2449096336, 'retcode_external': 0, 'request': TradeRequest(action=1, magic=123456, order=0, symbol='GOLD.pro', volume=0.1, price=4167.12, stoplimit=0.0, sl=4167.64, tp=4167.12, deviation=10, type=1, type_filling=0, type_time=0, expiration=0, comment='Open trade', position=0, position_by=0)}
-2025-11-13 21:35:20,994 INFO order_send retcode=10025 (NO_CHANGES) | 
- {'retcode': 10025, 'deal': 0, 'order': 0, 'volume': 0.0, 'price': 0.0, 'bid': 0.0, 'ask': 0.0, 'comment': 'No changes', 'request_id': 0, 'retcode_external': 0, 'request': TradeRequest(action=6, magic=123456, order=0, symbol='GOLD.pro', volume=0.0, price=0.0, stoplimit=0.0, sl=4167.64, tp=4167.12, deviation=0, type=0, type_filling=0, type_time=0, expiration=0, comment='Modify SLTP', position=131023499, position_by=0)}
-2025-11-13 21:40:00,739 INFO order_send retcode=10009 (DONE) | 
- {'retcode': 10009, 'deal': 88379578, 'order': 131024042, 'volume': 0.1, 'price': 4167.46, 'bid': 4167.46, 'ask': 4168.0, 'comment': 'Request executed', 'request_id': 2449096337, 'retcode_external': 0, 'request': TradeRequest(action=1, magic=123456, order=0, symbol='GOLD.pro', volume=0.1, price=4167.46, stoplimit=0.0, sl=4168.0, tp=4167.46, deviation=10, type=1, type_filling=0, type_time=0, expiration=0, comment='Open trade', position=0, position_by=0)}
+# -*- coding: utf-8 -*-
+"""
+Paper Trading Loop (MT5) – PPO Integration [LIVE-SAFE]
+- Twarda inicjalizacja MT5 do konkretnej instancji (MT5_EXE) z resetem połączenia i walidacją uprawnień.
+- Odwzorowanie cech LIVE jak w treningu: bazowe wskaźniki + LAGI (ze spec).
+- Preferencja: models/features_spec_live.json (LIVE-SAFE). Fallback: features_spec.json + intersekcja.
+- Re-ranking cech: najpierw realnie dostępne → potem brakujące (zero padding do per_step).
+- normalize_lot (min/max/step), order_send z fallback type_filling (RETURN → FOK), retcode_name w CSV.
+- Guard: jedna instancja procesu (lock-file) oraz 1 pozycja per (symbol+magic); brak piramidowania.
+"""
+import os
+import time
+import json
+import pickle
+import logging
+from pathlib import Path
+from datetime import time as dtime
+import MetaTrader5 as mt5
+import numpy as np
+import pandas as pd
+import yaml
+from stable_baselines3 import PPO
+# (opcjonalnie) jeśli masz w projekcie dodatkowe sanity
+try:
+    from utils.mt5_health import ensure_mt5_ready  # noqa: F401
+except Exception:
+    ensure_mt5_ready = None
+
+# === Konfiguracja logów i katalogów ===
+LOG_DIR = Path('paper_demo')
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+logging.basicConfig(
+    filename=str(LOG_DIR / 'live_trading.log'),
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(message)s'
+)
+
+# --- Czytaj config ---
+cfg = yaml.safe_load(open('config.yaml', 'r', encoding='utf-8'))
+SYMBOL = cfg['symbol']
+WINDOW = int(cfg.get('window', 128))
+MODEL_PATH = cfg['files']['model_path']
+VECNORM_PATH = cfg.get('files', {}).get('vecnorm_path', 'models/vecnorm_xauusd_m5.pkl')
+TF_MAP = {'M1': mt5.TIMEFRAME_M1, 'M5': mt5.TIMEFRAME_M5, 'M15': mt5.TIMEFRAME_M15}
+TF_NAME = cfg.get('timeframe', 'M5')
+TF = TF_MAP.get(TF_NAME, mt5.TIMEFRAME_M5)
+MIN_EQUITY = float(cfg.get('env', {}).get('min_equity', 0.8))  # jako ułamek balance
+TRADE_HOURS = cfg.get('env', {}).get('trade_hours_utc', None)  # np. ["06:00","20:55"]
+SLIPPAGE = int(cfg.get('env', {}).get('slippage', 10))
+MAGIC = int(cfg.get('env', {}).get('magic', 123456))
+SLEEP_SEC = int(cfg.get('env', {}).get('sleep_sec', 30)
+
+# --- Wymuszenie konkretnej instancji MT5 ---
+MT5_EXE = os.getenv("MT5_EXE", r"C:\Program Files\MetaTrader 5\terminal64.exe")
+
+# --- mapowanie kodów wynikowych MT5 (retcode -> nazwa) ---
+RET = {
+    10008: "PLACED", 10009: "DONE", 10010: "DONE_PARTIAL",
+    10013: "INVALID", 10014: "INVALID_VOLUME", 10015: "INVALID_PRICE",
+    10016: "INVALID_STOPS", 10017: "TRADE_DISABLED", 10018: "MARKET_CLOSED",
+    10019: "NO_MONEY", 10020: "PRICE_CHANGED", 10021: "PRICE_OFF",
+    10022: "INVALID_EXP", 10023: "ORDER_CHANGED", 10024: "TOO_MANY_REQUESTS",
+    10025: "NO_CHANGES", 10026: "SERVER_DISABLES_AT", 10027: "CLIENT_DISABLES_AT",
+    10028: "LOCKED", 10029: "FROZEN", 10030: "INVALID_FILL", 10031: "CONNECTION",
+}
+# 10027 = „Autotrading disabled by client terminal”
+
+# === Pomocnicze ===
+def init_mt5(strict: bool = True):
+    """
+    Twarda inicjalizacja MT5 do konkretnej instancji:
+    - zawsze robi shutdown(), potem initialize(path=MT5_EXE),
+    - waliduje: terminal.trade_allowed, account.trade_allowed, account.trade_expert,
+    - loguje szczegóły środowiska.
+    """
+    try:
+        mt5.shutdown()
+    except Exception:
+        pass
+    if not mt5.initialize(path=MT5_EXE):
+        raise RuntimeError(f"mt5.initialize() failed: {mt5.last_error()} (path={MT5_EXE})")
+    ti = mt5.terminal_info()
+    ai = mt5.account_info()
+    logging.info(
+        f"MT5 init path={getattr(ti,'path',None)} connected={getattr(ti,'connected',None)} "
+        f"trade_allowed={getattr(ti,'trade_allowed',None)} "
+        f"acc_trade_allowed={getattr(ai,'trade_allowed',None)} "
+        f"acc_trade_expert={getattr(ai,'trade_expert',None)} login={getattr(ai,'login',None)}"
+    )
+    if strict:
+        if not getattr(ti, "trade_allowed", False):
+            raise RuntimeError("Terminal trade_allowed=False. Włącz 'Algo Trading' w tej instancji MT5 lub popraw MT5_EXE.")
+        if not getattr(ai, "trade_allowed", False) or not getattr(ai, "trade_expert", False):
+            raise RuntimeError("Konto blokuje handel algorytmiczny (ACCOUNT_TRADE_ALLOWED/EXPERT=False). Sprawdź uprawnienia u brokera.")
+    return ti, ai
+
+def in_trade_hours(ts_utc: pd.Timestamp) -> bool:
+    if not TRADE_HOURS or len(TRADE_HOURS) != 2:
+        return True
+    try:
+        sh, sm = [int(x) for x in TRADE_HOURS[0].split(':')]
+        eh, em = [int(x) for x in TRADE_HOURS[1].split(':')]
+        start = dtime(sh, sm)
+        end = dtime(eh, em)
+        t = ts_utc.to_pydatetime().time()
+        if start <= end:
+            return start <= t <= end
+        # okno przez północ
+        return t >= start or t <= end
+    except Exception:
+        return True
+
+def ensure_symbol_visible(symbol: str):
+    si = mt5.symbol_info(symbol)
+    if si and not si.visible:
+        mt5.symbol_select(symbol, True)
+
+def get_last_bars(symbol, timeframe, n):
+    rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, n)
+    if rates is None or len(rates) < n:
+        return None
+    df = pd.DataFrame(rates)
+    df['time'] = pd.to_datetime(df['time'], unit='s', utc=True)
+    df.rename(columns={'real_volume': 'tick_volume'}, inplace=True)
+    return df[['time', 'open', 'high', 'low', 'close', 'tick_volume', 'spread']]
+
+# --- Baza wskaźników LIVE ---
+def add_features_incremental(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.sort_values('time').reset_index(drop=True)
+    df['ret1'] = np.log(df['close']).diff()
+    df['ema10'] = df['close'].ewm(span=10).mean()
+    df['ema50'] = df['close'].ewm(span=50).mean()
+    df['ema200'] = df['close'].ewm(span=200).mean()
+    d = df['close'].diff()
+    up = d.clip(lower=0).ewm(alpha=1/14, adjust=False).mean()
+    down = (-d.clip(upper=0)).ewm(alpha=1/14, adjust=False).mean()
+    rs = up / (down + 1e-12)
+    df['rsi14'] = 100 - (100 / (1 + rs))
+    h, l, c = df['high'], df['low'], df['close']
+    tr = np.maximum(h - l, np.maximum((h - c.shift()).abs(), (l - c.shift()).abs()))
+    df['atr14'] = tr.ewm(alpha=1/14, adjust=False).mean()
+    ema_f = df['close'].ewm(span=12).mean()
+    ema_s = df['close'].ewm(span=26).mean()
+    macd = ema_f - ema_s
+    sig = macd.ewm(span=9).mean()
+    df['macd'] = macd
+    df['macd_signal'] = sig
+    df['macd_hist'] = macd - sig
+    ma = df['close'].rolling(20).mean()
+    sd = df['close'].rolling(20).std()
+    df['bb_ma'] = ma
+    df['bb_up'] = ma + 2 * sd
+    df['bb_lo'] = ma - 2 * sd
+    df['bb_width'] = (df['bb_up'] - df['bb_lo']) / (ma.replace(0, np.nan).abs() + 1e-12)
+    df['close_log'] = np.log(df['close'].clip(lower=1e-12))
+    mu = df['close_log'].rolling(2000, min_periods=200).mean()
+    s = df['close_log'].rolling(2000, min_periods=200).std().replace(0, np.nan)
+    df['close_norm'] = (df['close_log'] - mu) / (s + 1e-8)
+    return df.dropna().reset_index(drop=True)
+
+def add_lags_live(df: pd.DataFrame, cols: list, max_lag: int) -> pd.DataFrame:
+    if max_lag <= 0 or not cols:
+        return df
+    out = df
+    for L in range(1, max_lag + 1):
+        lagged = df[cols].shift(L)
+        lagged.columns = [f"{c}_lag{L}" for c in cols]
+        out = pd.concat([out, lagged], axis=1)
+    return out
+
+def load_spec():
+    """
+    Preferuj LIVE-SAFE (features_spec_live.json); jeśli brak – pełna spec (features_spec.json).
+    Zwraca: (spec_dict, is_live_safe: bool)
+    """
+    live_p = Path("models/features_spec_live.json")
+    full_p = Path("models/features_spec.json")
+    if live_p.exists():
+        return json.loads(live_p.read_text(encoding="utf-8")), True
+    if full_p.exists():
+        return json.loads(full_p.read_text(encoding="utf-8")), False
+    raise RuntimeError("Brak features_spec*.json – uruchom feature discovery.")
+
+def normalize_lot(symbol, lot: float) -> float:
+    info = mt5.symbol_info(symbol)
+    if not info:
+        return lot
+    lot = max(info.volume_min, min(info.volume_max, lot))  # clamp
+    steps = round(lot / info.volume_step)
+    adj = steps * info.volume_step
+    return float(f"{adj:.2f}")  # zwykle 0.01/0.1 itp.
+
+def dynamic_lot(equity):
+    # zostawiamy Twoje bieżące założenie ryzyka
+    return max(0.01, round(equity / 500000, 2))
+
+def calc_sl_tp(price, atr):
+    sl = price - 2 * atr if atr else None
+    tp = price + 4 * atr if atr else None
+    return sl, tp
+
+def order_send_with_fallback(request: dict):
+    res = mt5.order_send(request)
+    if res is not None and getattr(res, "retcode", None) == 10030:  # INVALID_FILL
+        request["type_filling"] = mt5.ORDER_FILLING_FOK
+        res = mt5.order_send(request)
+    code = getattr(res, "retcode", None)
+    name = RET.get(code, str(code))
+    try:
+        asd = res._asdict()
+        logging.info(f"order_send retcode={code} ({name}) \n {asd}")
+    except Exception:
+        logging.info(f"order_send retcode={code} ({name})")
+    return res
+
+def open_position(direction, lot, sl=None, tp=None):
+    tick = mt5.symbol_info_tick(SYMBOL)
+    price = tick.ask if direction == "BUY" else tick.bid
+    req = {
+        "action": mt5.TRADE_ACTION_DEAL, "symbol": SYMBOL,
+        "type": mt5.ORDER_TYPE_BUY if direction == "BUY" else mt5.ORDER_TYPE_SELL,
+        "volume": lot, "price": price, "deviation": SLIPPAGE,
+        "magic": MAGIC, "comment": "Open trade",
+        "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_RETURN,
+    }
+    if sl:
+        req["sl"] = sl
+    if tp:
+        req["tp"] = tp
+    return order_send_with_fallback(req)
+
+def close_position(ticket, pos_type, volume):
+    req = {
+        "action": mt5.TRADE_ACTION_DEAL, "position": ticket, "symbol": SYMBOL,
+        "type": mt5.ORDER_TYPE_SELL if pos_type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY,
+        "volume": volume,
+        "price": (mt5.symbol_info_tick(SYMBOL).bid if pos_type == mt5.ORDER_TYPE_BUY
+                  else mt5.symbol_info_tick(SYMBOL).ask),
+        "deviation": SLIPPAGE, "magic": MAGIC, "comment": "Close position",
+        "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_RETURN,
+    }
+    return order_send_with_fallback(req)
+
+def positions_by_magic(symbol, magic):
+    all_pos = mt5.positions_get(symbol=symbol)
+    if not all_pos:
+        return []
+    return [p for p in all_pos if getattr(p, "magic", 0) == magic]
+
+def build_obs(df_bars: pd.DataFrame, model_obs_dim: int):
+    """
+    Buduje wektor obserwacji z:
+    - bazowych wskaźników LIVE,
+    - lagów do max_lag (ze spec),
+    - listy cech: preferuj dostępne; resztę uzupełniaj zerami; docięcie do per_step.
+    Zwraca: (obs_flat, matched_feats, zero_filled, spec_dict)
+    """
+    spec, _ = load_spec()
+    feat = add_features_incremental(df_bars)
+    max_lag = int(spec.get("max_lag", 0))
+    # przygotuj lagi dla bazowych, które rzeczywiście występują w spec
+    base_needed = sorted({c.split("_lag")[0] for c in spec.get("feature_columns", [])})
+    feat = add_lags_live(feat, [c for c in base_needed if c in feat.columns], max_lag)
+    # ułóż cechy: najpierw dostępne w live, potem brakujące
+    full_list = spec.get("feature_columns", [])
+    available = [c for c in full_list if c in feat.columns]
+    missing = [c for c in full_list if c not in feat.columns]
+    ordered = (available + missing)[: max(1, (model_obs_dim - 2) // WINDOW)]
+    tail = feat.tail(WINDOW)
+    block_cols, zero_filled = [], 0
+    for col in ordered:
+        if col in tail.columns:
+            block_cols.append(tail[col].to_numpy(dtype=np.float32))
+        else:
+            block_cols.append(np.zeros(WINDOW, dtype=np.float32))
+            zero_filled += 1
+    while len(block_cols) < max(1, (model_obs_dim - 2) // WINDOW):
+        block_cols.append(np.zeros(WINDOW, dtype=np.float32))
+        zero_filled += 1
+    block = np.stack(block_cols, axis=1) if block_cols else np.zeros((WINDOW, 1), dtype=np.float32)
+    flat = block.flatten()
+    obs = np.concatenate([flat, np.array([0.0, 0.0], dtype=np.float32)])
+    matched = len(available)
+    return obs, matched, zero_filled, spec
+
+def main():
+    # (opcjonalnie) szybkie sanity z własnego helpera
+    try:
+        if ensure_mt5_ready:
+            ensure_mt5_ready()
+    except Exception:
+        pass
+
+    # --- Blokada jednej instancji (lock-file) ---
+    LOCK = LOG_DIR / "live.lock"
+    if LOCK.exists():
+        raise SystemExit("Inna instancja już działa (lock file).")
+    LOCK.write_text(str(os.getpid()), encoding="utf-8")
+
+    try:
+        # → Twardy init do właściwej instancji i walidacja uprawnień
+        init_mt5(strict=True)
+        ensure_symbol_visible(SYMBOL)
+
+        # Model i normalizacja
+        model = PPO.load(MODEL_PATH)
+        expected_dim = int(model.observation_space.shape[0])
+
+        # VecNormalize fallback (gdy brak pliku)
+        class _IdentityVec:
+            training = False
+            norm_reward = False
+            @staticmethod
+            def normalize_obs(x):
+                return x
+
+        if Path(VECNORM_PATH).exists():
+            try:
+                with open(VECNORM_PATH, 'rb') as f:
+                    vecnorm = pickle.load(f)
+                vecnorm.training = False
+                vecnorm.norm_reward = False
+            except Exception as e:
+                logging.warning(f"Nie udało się wczytać VecNormalize ({e}). Używam tożsamości.")
+                vecnorm = _IdentityVec()
+        else:
+            logging.info("Brak pliku VecNormalize – używam tożsamości.")
+            vecnorm = _IdentityVec()
+
+        # CSV z decyzjami
+        csv = LOG_DIR / 'live_decisions.csv'
+        if not csv.exists():
+            csv.write_text(
+                'time_utc,price,action_id,action_label,equity,lot,sl,tp,retcode,retcode_name,'
+                'matched_features,zero_filled,spec_id,pos_count_before,pos_count_after,reason\n',
+                encoding='utf-8'
+            )
+
+        last_ts = None
+        hb_t = time.time()
+
+        while True:
+            bars = get_last_bars(SYMBOL, TF, n=WINDOW + 800)
+            if bars is None or len(bars) < WINDOW + 200:
+                time.sleep(5)
+                continue
+
+            try:
+                obs, matched, zero_filled, spec = build_obs(bars, expected_dim)
+            except Exception as e:
+                logging.exception(f"build_obs failed: {e}")
+                time.sleep(5)
+                continue
+
+            feat = add_features_incremental(bars)
+            cur_ts = feat['time'].iloc[-1]
+
+            # zapobieganie wielokrotnemu działaniu w tej samej świecy
+            if last_ts is not None and cur_ts == last_ts:
+                time.sleep(2)
+                continue
+
+            # normalizacja obserwacji
+            obs_n = vecnorm.normalize_obs(obs.reshape(1, -1)).reshape(-1)
+            action, _ = model.predict(obs_n, deterministic=True)
+            action = int(action)
+            decision = {0: 'SHORT', 1: 'FLAT', 2: 'LONG'}.get(action, 'FLAT')
+
+            # parametry zlecenia
+            price = float(feat['close'].iloc[-1])
+            atr = float(feat['atr14'].iloc[-1]) if 'atr14' in feat.columns else None
+            equity = mt5.account_info().equity
+            lot = normalize_lot(SYMBOL, dynamic_lot(equity))
+
+            # LONG-owe bazowe wyliczenie
+            sl, tp = calc_sl_tp(price, atr)
+            # <-- FIX for SHORT: odwróć poziomy dla shorta
+            if action == 0:  # SHORT
+                sl = price + 2 * atr if atr else None
+                tp = price - 4 * atr if atr else None
+            # ---- KONIEC JEDYNEJ ZMIANY ----
+
+            retcode = None
+            retname = None
+            reason = "executed"
+            pos_count_before = len(positions_by_magic(SYMBOL, MAGIC))
+            pos_count_after = pos_count_before
+
+            # --- restrykcja godzinowa i equity guard z rozróżnieniem CLOSE vs OPEN ---
+            ALLOW_CLOSE_OUTSIDE = bool(cfg.get('env', {}).get('allow_close_outside_hours', True))
+            outside_hours = not in_trade_hours(cur_ts)
+
+            pos_list = positions_by_magic(SYMBOL, MAGIC)
+            pos = pos_list[0] if pos_list else None
+
+            def record_no_changes(r: str):
+                nonlocal reason
+                reason = r
+                logging.info(f"NO_CHANGES: {r}")
+                return 10025, RET[10025]
+
+            # 1) Guard equity – pozwól na CLOSE nawet gdy equity < MIN_EQUITY*balance
+            if equity < MIN_EQUITY * mt5.account_info().balance:
+                if pos:
+                    if action == 1:
+                        # model chce FLAT → zamknij
+                        res = close_position(pos.ticket, pos.type, pos.volume)
+                        retcode = getattr(res, "retcode", None); retname = RET.get(retcode, str(retcode))
+                        pos_count_after = len(positions_by_magic(SYMBOL, MAGIC))
+                    else:
+                        # gdy flip – wykonaj tylko CLOSE, bez nowego OPEN
+                        desired = "BUY" if action == 2 else "SELL"
+                        same_dir = ((pos.type == mt5.ORDER_TYPE_BUY and desired == "BUY") or
+                                    (pos.type == mt5.ORDER_TYPE_SELL and desired == "SELL"))
+                        if same_dir:
+                            retcode, retname = record_no_changes("equity_guard_same_dir")
+                        else:
+                            _ = close_position(pos.ticket, pos.type, pos.volume)
+                            retcode, retname = record_no_changes("equity_guard_flip_close_only")
+                            pos_count_after = len(positions_by_magic(SYMBOL, MAGIC))
+                else:
+                    retcode, retname = record_no_changes("equity_guard_no_pos")
+
+            # 2) Poza godzinami – pozwól CLOSE, blokuj OPEN (jeśli ALLOW_CLOSE_OUTSIDE)
+            elif outside_hours and ALLOW_CLOSE_OUTSIDE:
+                if not pos:
+                    retcode, retname = record_no_changes("outside_hours_flat_no_pos")
+                else:
+                    if action == 1:
+                        # FLAT → zamknij
+                        res = close_position(pos.ticket, pos.type, pos.volume)
+                        retcode = getattr(res, "retcode", None); retname = RET.get(retcode, str(retcode))
+                        pos_count_after = len(positions_by_magic(SYMBOL, MAGIC))
+                    else:
+                        desired = "BUY" if action == 2 else "SELL"
+                        same_dir = ((pos.type == mt5.ORDER_TYPE_BUY and desired == "BUY") or
+                                    (pos.type == mt5.ORDER_TYPE_SELL and desired == "SELL"))
+                        if same_dir:
+                            retcode, retname = record_no_changes("outside_hours_same_dir")
+                        else:
+                            # flip po godzinach → CLOSE only
+                            _ = close_position(pos.ticket, pos.type, pos.volume)
+                            retcode, retname = record_no_changes("outside_hours_flip_close_only")
+                            pos_count_after = len(positions_by_magic(SYMBOL, MAGIC))
+
+            # 3) W godzinach handlu – pełna polityka
+            else:
+                if action == 1:  # FLAT
+                    if pos:
+                        res = close_position(pos.ticket, pos.type, pos.volume)
+                        retcode = getattr(res, "retcode", None)
+                        retname = RET.get(retcode, str(retcode))
+                        pos_count_after = len(positions_by_magic(SYMBOL, MAGIC))
+                    else:
+                        retcode, retname = record_no_changes("flat_no_pos")
+                else:
+                    desired = "BUY" if action == 2 else "SELL"
+                    if not pos:
+                        # FLAT -> OPEN desired
+                        res = open_position(desired, lot, sl, tp)
+                        retcode = getattr(res, "retcode", None)
+                        retname = RET.get(retcode, str(retcode))
+                        pos_count_after = len(positions_by_magic(SYMBOL, MAGIC))
+                    else:
+                        same_dir = (
+                            (pos.type == mt5.ORDER_TYPE_BUY and desired == "BUY") or
+                            (pos.type == mt5.ORDER_TYPE_SELL and desired == "SELL")
+                        )
+                        if same_dir:
+                            # Brak piramidowania – zostaw jak jest
+                            retcode, retname = record_no_changes("same_dir_no_pyramiding")
+                        else:
+                            # FLIP: zamknij i otwórz nowy kierunek
+                            _ = close_position(pos.ticket, pos.type, pos.volume)
+                            res = open_position(desired, lot, sl, tp)
+                            retcode = getattr(res, "retcode", None)
+                            retname = RET.get(retcode, str(retcode))
+                            pos_count_after = len(positions_by_magic(SYMBOL, MAGIC))
+
+            # zapis do CSV
+            try:
+                with csv.open('a', encoding='utf-8') as f:
+                    f.write(
+                        f"{cur_ts},{price:.5f},{action},{decision},{equity:.2f},{lot:.2f},"
+                        f"{sl},{tp},{retcode},{retname},{matched},{zero_filled},{spec.get('spec_id','unknown')},"
+                        f"{pos_count_before},{pos_count_after},{reason}\n"
+                    )
+            except Exception as e:
+                logging.warning(f"CSV append failed: {e}")
+
+            last_ts = cur_ts
+
+            # heartbeat co ~10 min
+            if time.time() - hb_t > 600:
+                logging.info(f"[HB] {SYMBOL} {TF_NAME} last_ts={cur_ts} price={price:.2f} pos={pos_count_after}")
+                hb_t = time.time()
+
+            time.sleep(SLEEP_SEC)
+    finally:
+        try:
+            mt5.shutdown()
+        except Exception:
+            pass
+        # usuń lock-file
+        try:
+            (LOG_DIR / "live.lock").unlink()
+        except Exception:
+            pass
+
+if __name__ == '__main__':
+    main()
