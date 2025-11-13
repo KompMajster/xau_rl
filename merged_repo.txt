@@ -1,23 +1,2 @@
-paper_live.log zwraca
-[2025-11-11T09:37:13Z] paper_loop bootstrap_alive
-[2025-11-11T09:37:15Z] [LIVE] model loaded: ppo_xauusd_m5.zip, vecnorm_stats=yes
-[2025-11-11T09:37:15Z] [WARN] obs_norm shape mismatch: obs=12288 vs mean=3586 -> skipping norm
-[2025-11-11T09:37:15Z] [ERROR] policy predict failed: Error: Unexpected observation shape (1, 12288) for Box environment, please use (3586,) or (n_env, 3586) for the observation shape.
-[2025-11-11T09:37:15Z] [LIVE] decision=FLAT action=0 last_time=2025-11-11 08:30:00+00:00 n_cols=96
-[2025-11-11T09:37:46Z] [WARN] obs_norm shape mismatch: obs=12288 vs mean=3586 -> skipping norm
-[2025-11-11T09:37:46Z] [ERROR] policy predict failed: Error: Unexpected observation shape (1, 12288) for Box environment, please use (3586,) or (n_env, 3586) for the observation shape.
-[2025-11-11T09:37:46Z] [LIVE] decision=FLAT action=0 last_time=2025-11-11 08:30:00+00:00 n_cols=96
-
-paper_loop.err.log zwraca
-C:\xau_rl\paper_demo\paper_loop_mt5_demo.py:513: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
-  now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
-C:\xau_rl\paper_demo\paper_loop_mt5_demo.py:530: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
-  now_stamp = _fmt_ts_log_local(datetime.utcnow().replace(tzinfo=timezone.utc))
-C:\xau_rl\paper_demo\paper_loop_mt5_demo.py:513: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
-  now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
-C:\xau_rl\paper_demo\paper_loop_mt5_demo.py:530: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
-  now_stamp = _fmt_ts_log_local(datetime.utcnow().replace(tzinfo=timezone.utc))
-C:\xau_rl\paper_demo\paper_loop_mt5_demo.py:513: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
-  now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
-C:\xau_rl\paper_demo\paper_loop_mt5_demo.py:530: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
-  now_stamp = _fmt_ts_log_local(datetime.utcnow().replace(tzinfo=timezone.utc))
+2025-11-13 21:05:01,665 INFO order_send retcode=10016 (INVALID_STOPS) |
+ {'retcode': 10016, 'deal': 0, 'order': 0, 'volume': 0.0, 'price': 0.0, 'bid': 0.0, 'ask': 0.0, 'comment': 'Invalid stops', 'request_id': 0, 'retcode_external': 0, 'request': TradeRequest(action=1, magic=123456, order=0, symbol='GOLD.pro', volume=0.1, price=4163.02, stoplimit=0.0, sl=4150.941555397036, tp=4188.256889205928, deviation=10, type=1, type_filling=0, type_time=0, expiration=0, comment='Open trade', position=0, position_by=0)}
