@@ -1,30 +1,16 @@
-Traceback (most recent call last):
-  File "<frozen runpy>", line 189, in _run_module_as_main
-  File "<frozen runpy>", line 159, in _get_module_details
-  File "<frozen importlib._bootstrap_external>", line 1160, in get_code
-  File "<frozen importlib._bootstrap_external>", line 1090, in source_to_code
-  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
-  File "C:\xau_rl\paper_demo\paper_loop_mt5_demo.py", line 51
-    SLEEP_SEC = int(cfg.get('env', {}).get('sleep_sec', 30)
-                   ^
-SyntaxError: '(' was never closed
-Traceback (most recent call last):
-  File "<frozen runpy>", line 189, in _run_module_as_main
-  File "<frozen runpy>", line 159, in _get_module_details
-  File "<frozen importlib._bootstrap_external>", line 1160, in get_code
-  File "<frozen importlib._bootstrap_external>", line 1090, in source_to_code
-  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
-  File "C:\xau_rl\paper_demo\paper_loop_mt5_demo.py", line 51
-    SLEEP_SEC = int(cfg.get('env', {}).get('sleep_sec', 30)
-                   ^
-SyntaxError: '(' was never closed
-Traceback (most recent call last):
-  File "<frozen runpy>", line 189, in _run_module_as_main
-  File "<frozen runpy>", line 159, in _get_module_details
-  File "<frozen importlib._bootstrap_external>", line 1160, in get_code
-  File "<frozen importlib._bootstrap_external>", line 1090, in source_to_code
-  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
-  File "C:\xau_rl\paper_demo\paper_loop_mt5_demo.py", line 51
-    SLEEP_SEC = int(cfg.get('env', {}).get('sleep_sec', 30)
-                   ^
-SyntaxError: '(' was never closed
+Data: 2025-11-10 14:28:05
+
+## Metryki bazowe
+
+Final equity: 1.000000
+Min equity: 0.963478
+Max drawdown: -0.039691
+
+## Metryki z krzywej kapitału
+- Kroki: 3000
+- Sharpe (dzienny): 0.004
+- Sortino (dzienny): 0.007
+- Zmienność dzienna: 0.0088
+- CAGR (est.): 0.000%
+- MaxDD: -3.97%
+- Calmar: 0.000
