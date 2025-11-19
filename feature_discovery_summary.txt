@@ -1,0 +1,72 @@
+# Feature Discovery Summary
+Generated at: 2025-11-18T21:00:11
+TopK: 96
+Prev size: 60, Cur size: 60
+Jaccard(prev,cur): 1.000
+Min new ratio enforced: 0.10
+
+-- KEPT --
+atr14
+atr14_lag1
+atr14_lag2
+atr14_lag3
+bb_lo
+bb_lo_lag1
+bb_lo_lag2
+bb_lo_lag3
+bb_ma
+bb_ma_lag1
+bb_ma_lag2
+bb_ma_lag3
+bb_up
+bb_up_lag1
+bb_up_lag2
+bb_up_lag3
+bb_width
+bb_width_lag1
+bb_width_lag2
+bb_width_lag3
+close_log
+close_log_lag1
+close_log_lag2
+close_log_lag3
+close_norm
+close_norm_lag1
+close_norm_lag2
+close_norm_lag3
+ema10
+ema10_lag1
+ema10_lag2
+ema10_lag3
+ema200
+ema200_lag1
+ema200_lag2
+ema200_lag3
+ema50
+ema50_lag1
+ema50_lag2
+ema50_lag3
+macd
+macd_hist
+macd_hist_lag1
+macd_hist_lag2
+macd_hist_lag3
+macd_lag1
+macd_lag2
+macd_lag3
+macd_signal
+macd_signal_lag1
+macd_signal_lag2
+macd_signal_lag3
+ret1
+ret1_lag1
+ret1_lag2
+ret1_lag3
+rsi14
+rsi14_lag1
+rsi14_lag2
+rsi14_lag3
+
+-- NEW --
+
+-- REMOVED --

@@ -1,0 +1,12 @@
+{"ts": "2025-11-12T01:06:13.740548+00:00", "mode": "train_ppo", "spec_id": "9d244b48ed7a_live", "val_reward_mean": 0.007813755422830582, "topK": 60}
+{"ts": "2025-11-14T00:57:29.990342+00:00", "mode": "train_ppo", "spec_id": "9d244b48ed7a_live", "val_reward_mean": -0.003406381933018565, "topK": 60}
+{"ts": "2025-11-15T00:57:30.246155+00:00", "mode": "train_ppo", "spec_id": "9d244b48ed7a_live", "val_reward_mean": 0.015594680793583393, "topK": 60}
+{"ts": "2025-11-16T00:54:11.710449+00:00", "mode": "train_ppo", "spec_id": "9d244b48ed7a_live", "val_reward_mean": 0.052265606820583344, "topK": 60}
+{"ts": "2025-11-16T17:05:16.996877+00:00", "mode": "train_ppo", "spec_id": "9d244b48ed7a_live", "val_reward_mean": 0.04873490706086159, "topK": 60}
+{"ts": "2025-11-17T02:29:43.536848+00:00", "mode": "train_ppo", "spec_id": "9d244b48ed7a_live", "val_reward_mean": 0.04873490706086159, "topK": 60}
+{"ts": "2025-11-17T12:01:27.044468+00:00", "mode": "train_ppo", "spec_id": "9d244b48ed7a_live", "val_reward_mean": 0.007114016450941563, "topK": 60}
+{"ts": "2025-11-17T21:32:20.229454+00:00", "mode": "train_ppo", "spec_id": "9d244b48ed7a_live", "val_reward_mean": 0.007114016450941563, "topK": 60}
+{"ts": "2025-11-18T06:57:33.853722+00:00", "mode": "train_ppo", "spec_id": "9d244b48ed7a_live", "val_reward_mean": 0.007335762493312359, "topK": 60}
+{"ts": "2025-11-18T16:24:44.023654+00:00", "mode": "train_ppo", "spec_id": "9d244b48ed7a_live", "val_reward_mean": 0.007335762493312359, "topK": 60}
+{"ts": "2025-11-19T01:53:51.541228+00:00", "mode": "train_ppo", "spec_id": "9d244b48ed7a_live", "val_reward_mean": 0.007335762493312359, "topK": 60}
+{"ts": "2025-11-19T11:31:20.419578+00:00", "mode": "train_ppo", "spec_id": "9d244b48ed7a_live", "val_reward_mean": 0.012636903673410416, "topK": 60}
