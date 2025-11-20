@@ -1,17 +1,390 @@
-# Raport walidacyjny RL (XAUUSD M5)
-Data: 2025-11-19 12:31:42
 
-## Metryki bazowe
+# ops/feature_discovery_weekly.py
+# -*- coding: utf-8 -*-
+"""
+Feature Discovery (XAUUSD M5)
+- Ranking cech (Spearman vs target), lagi blokowo (--max_lag),
+- Dywersyfikacja vs historia (--change_frac => MIN_NEW_RATIO), repeat-penalty,
+- Wyjścia:
+  * models/features_spec.json (gdy --mode update-spec i Jaccard spadnie poniżej progu),
+  * models/features_spec_live.json (LIVE-SAFE = intersekcja z tym, co potrafi pętla LIVE),
+  * models/features_spec_history.jsonl (append, historia zmian),
+  * reports/feature_discovery_rank.csv,
+  * reports/feature_discovery_summary.txt,
+  * reports/feature_discovery_report.html (KEPT / NEW / REMOVED).
+"""
 
-Final equity: 1.000000
-Min equity: 1.000000
-Max drawdown: -0.169858
+import argparse
+import os
+import json
+import traceback
+import html
+from pathlib import Path
+from datetime import datetime
 
-## Metryki z krzywej kapitału
-- Kroki: 3000
-- Sharpe (dzienny): 0.026
-- Sortino (dzienny): 0.016
-- Zmienność dzienna: 0.0457
-- CAGR (est.): 0.000%
-- MaxDD: -16.99%
-- Calmar: 0.000
+import numpy as np
+import pandas as pd
+import yaml
+
+# Repo root (plik jest w katalogu ops/)
+ROOT = Path(__file__).resolve().parents[1]
+os.chdir(ROOT)
+
+# Ścieżki wyjściowe
+LOG_DIR = ROOT / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG = LOG_DIR / "feature_discovery.log"
+
+HIST_PATH = ROOT / "models" / "features_spec_history.jsonl"
+SPEC_PATH = ROOT / "models" / "features_spec.json"
+SPEC_LIVE = ROOT / "models" / "features_spec_live.json"
+
+RANK_PATH = ROOT / "reports" / "feature_discovery_rank.csv"
+SUMMARY_P = ROOT / "reports" / "feature_discovery_summary.txt"
+HTML_P = ROOT / "reports" / "feature_discovery_report.html"
+
+# Parametry stałe
+MIN_NEW_RATIO = 0.20       # domyślny udział nowych cech w topK (może być nadpisany --change_frac)
+HIST_WINDOW = 6            # ile ostatnich wpisów historii użyć do repeat-penalty
+REPEAT_PENALTY = 0.90      # współczynnik kary za częste powtarzanie tej samej cechy
+MIN_OBS = 200              # minimalna liczba obserwacji do oceny korelacji
+
+# Placeholder — niewykorzystywany w tej wersji, ale zostawiamy dla spójności repo
+FRED_API_KEY_HARDCODED = os.environ.get("FRED_API_KEY", "")
+
+
+def log(msg: str):
+    ts = datetime.now().isoformat(timespec="seconds")
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with LOG.open("a", encoding="utf-8") as f:
+        f.write(f"[{ts}] {msg}\n")
+
+
+def load_cfg():
+    return yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
+
+
+def read_features_csv(cfg):
+    p = Path(cfg["files"]["features_csv"])
+    if not p.exists():
+        raise FileNotFoundError(f"features_csv not found: {p}")
+    df = pd.read_csv(p, parse_dates=["time"])
+    return df.sort_values("time").reset_index(drop=True)
+
+
+def build_target(df: pd.DataFrame, price_col="close", horizon=1):
+    """Target = jednokrokowa przyszła zmiana procentowa."""
+    return df[price_col].pct_change().shift(-horizon).rename("target_fwd1")
+
+
+def add_lags(df: pd.DataFrame, cols: list, max_lag: int) -> pd.DataFrame:
+    """Dodaje lagi 1..max_lag dla listy kolumn."""
+    if max_lag <= 0 or not cols:
+        return df
+    lag_blocks = []
+    for L in range(1, max_lag + 1):
+        blk = df[cols].shift(L)
+        blk.columns = [f"{c}_lag{L}" for c in cols]
+        lag_blocks.append(blk)
+    return pd.concat([df] + lag_blocks, axis=1, copy=False)
+
+
+def score_features(df: pd.DataFrame, feature_cols: list, target_col="target_fwd1"):
+    """Ranking po |Spearman|. Pomija cechy zbyt stałe i zbyt krótkie."""
+    scores = []
+    y_full = df[target_col].astype(float)
+    for c in feature_cols:
+        try:
+            x_full = df[c].astype(float)
+            ok = x_full.notna() & y_full.notna()
+            n = int(ok.sum())
+            if n < MIN_OBS:
+                continue
+            x = x_full[ok]
+            y = y_full[ok]
+            if x.nunique(dropna=True) <= 1 or y.nunique(dropna=True) <= 1:
+                continue
+            rho = x.corr(y, method="spearman")
+            if pd.notna(rho):
+                scores.append((c, float(abs(rho))))
+        except Exception:
+            # bezpiecznie pomijamy pojedyncze problemy kolumn
+            continue
+    scores.sort(key=lambda t: t[1], reverse=True)
+    return pd.DataFrame(scores, columns=["feature", "abs_spearman"])
+
+
+def load_history(max_lines=HIST_WINDOW):
+    if not HIST_PATH.exists():
+        return []
+    rows = []
+    for line in HIST_PATH.read_text(encoding="utf-8").splitlines():
+        try:
+            rows.append(json.loads(line))
+        except Exception:
+            pass
+    return rows[-max_lines:] if rows else []
+
+
+def save_history(entry: dict):
+    HIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with HIST_PATH.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def jaccard(a: set, b: set) -> float:
+    """|A ∩ B| / |A ∪ B| z ochroną przed dzieleniem przez 0."""
+    if not a and not b:
+        return 1.0
+    return len(a & b) / max(1, len(a | b))
+
+
+def apply_repeat_penalty(rank_df: pd.DataFrame, hist_rows: list):
+    """Obniża punktację cechom często wybieranym w poprzednich tygodniach."""
+    if not hist_rows or rank_df.empty:
+        return rank_df.copy()
+    freq = {}
+    for r in hist_rows:
+        for c in r.get("feature_columns", []):
+            freq[c] = freq.get(c, 0) + 1
+    out = rank_df.copy()
+    out["repeat_freq"] = out["feature"].map(lambda c: freq.get(c, 0))
+    out["score_after_penalty"] = out["abs_spearman"] * (REPEAT_PENALTY ** out["repeat_freq"])
+    return out.sort_values("score_after_penalty", ascending=False).reset_index(drop=True)
+
+
+def diversify_select(adjusted_rank: pd.DataFrame, prev_features: list, topK: int,
+                     min_new_ratio=MIN_NEW_RATIO):
+    """Wymusza min. udział nowych cech w topK, resztę dopełnia z rankingu."""
+    prev_set = set(prev_features or [])
+    new_needed = int(np.ceil(topK * min_new_ratio))
+    chosen, new_cnt = [], 0
+    # Najpierw nowe
+    for _, row in adjusted_rank.iterrows():
+        f = row["feature"]
+        if f not in prev_set and f not in chosen:
+            chosen.append(f)
+            new_cnt += 1
+            if new_cnt >= new_needed:
+                break
+    # Potem dopełnienie
+    if len(chosen) < topK:
+        for _, row in adjusted_rank.iterrows():
+            f = row["feature"]
+            if f not in chosen:
+                chosen.append(f)
+                if len(chosen) >= topK:
+                    break
+    return chosen[:topK]
+
+
+def features_hash(features: list) -> str:
+    import hashlib
+    return hashlib.sha1(",".join(sorted(features or [])).encode("utf-8")).hexdigest()[:12]
+
+
+def render_changes_html(kept, new, removed, jac, topK, spec_id, rank_csv_rel):
+    def lst(title, items, color):
+        items = list(items)
+        cnt = len(items)
+        lis = "".join(f"<li><code>{html.escape(x)}</code></li>" for x in items)
+        body = f"<ul>{lis}</ul>"
+        det = (f"<details{' open' if cnt <= 50 else ''}>"
+               f"<summary>{title} ({cnt})</summary>{body}</details>")
+        return f"<div style='margin:10px 0;color:{color}'>{det}</div>"
+    return f"""<!doctype html><html lang="pl"><head><meta charset="utf-8">
+<title>Feature Discovery — zmiany cech</title>
+<style>body{{font-family:Segoe UI,Roboto,Arial,sans-serif;margin:24px;color:#222}}
+h1{{font-size:22px;margin:0 0 8px}}
+.meta{{color:#666;font-size:12px;margin-bottom:12px}}
+.box{{background:#fafafa;border:1px solid #eee;border-radius:8px;padding:12px;margin:12px 0}}
+code{{background:#f2f2f2;padding:0 4px;border-radius:3px}}
+a{{color:#0057B8}}</style></head>
+<body>
+  <h1>Feature Discovery — raport zmian</h1>
+  <div class="meta">Spec ID: <code>{spec_id}</code>
+  TopK: {topK}
+  Jaccard(prev,cur): {jac:.3f}</div>
+  <div class="box"><p><strong>Ranking CSV:</strong> {html.escape(rank_csv_rel)}{html.escape(rank_csv_rel)}</a></p></div>
+  <div class="box">{lst("Utrzymane", kept, "#2b7a0b")}</div>
+  <div class="box">{lst("Nowe", new, "#1f5fbf")}</div>
+  <div class="box">{lst("Usunięte", removed, "#b3261e")}</div>
+</body></html>"""
+
+
+# --- wszechświat cech dostępnych w pętli LIVE (add_features_incremental + lagi) ---
+LIVE_BASE = [
+    "ret1", "ema10", "ema50", "ema200", "rsi14", "atr14",
+    "macd", "macd_signal", "macd_hist",
+    "bb_ma", "bb_up", "bb_lo", "bb_width",
+    "close_log", "close_norm",
+]
+
+
+def live_feature_universe(max_lag: int):
+    cols = set(LIVE_BASE)
+    for L in range(1, max_lag + 1):
+        for c in LIVE_BASE:
+            cols.add(f"{c}_lag{L}")
+    return cols
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--topK", type=int, default=96)
+    ap.add_argument("--max_lag", type=int, default=3)
+    ap.add_argument("--out", type=str, default=str(SPEC_PATH))
+    ap.add_argument("--change_frac", type=float, default=0.3,
+                    help="Minimalny udział nowych cech w topK (0..1). Domyślnie 0.20.")
+    ap.add_argument("--mode", type=str, default="update-spec",
+                    choices=["rank-only", "update-spec"],
+                    help="'update-spec' zapisze features_spec.json gdy zmiana duża (Jaccard<min).")
+    ap.add_argument("--min_jaccard", type=float, default=0.75,
+                    help="Próg podobieństwa (Jaccard) do aktualizacji features_spec.json.")
+    ap.add_argument("--live-only", action="store_true", default=True,
+                    help="Rankuj i wybieraj tylko cechy dostępne w LIVE (LIVE_BASE + lagi).")
+    args = ap.parse_args()
+
+    global MIN_NEW_RATIO
+    if args.change_frac is not None:
+        MIN_NEW_RATIO = float(np.clip(args.change_frac, 0.0, 1.0))
+
+    try:
+        log("feature_discovery bootstrap_alive")
+
+        cfg = load_cfg()
+        df = read_features_csv(cfg)
+
+        price_col = "close_norm" if "close_norm" in df.columns else "close"
+        df["target_fwd1"] = build_target(df, price_col=price_col)
+
+        # baza i kandydaci
+        base_cols = ["time", "open", "high", "low", "close", "tick_volume", "spread"]
+        all_cols = [c for c in df.columns if c not in base_cols + ["target_fwd1"]]
+
+        # dobuduj lagi do wszystkich potencjalnych kandydatów
+        df = add_lags(df, all_cols, args.max_lag)
+
+        # ogranicz kandydatów w zależności od trybu
+        if args.live_only:
+            live_uni = live_feature_universe(args.max_lag)
+            cand_cols = [c for c in df.columns
+                         if (c not in base_cols + ["target_fwd1"]) and (c in live_uni)]
+        else:
+            cand_cols = [c for c in df.columns if c not in base_cols + ["target_fwd1"]]
+
+        # ranking
+        rank = score_features(df, cand_cols, target_col="target_fwd1")
+        if rank.empty:
+            raise RuntimeError("Ranking pusty – brak danych.")
+
+        # historia + kara powtarzania
+        hist = load_history(HIST_WINDOW)
+        prev = hist[-1]["feature_columns"] if hist else []
+        rank_adj = apply_repeat_penalty(rank, hist)
+
+        # zapis CSV rankingu
+        out_rank = rank_adj.assign(prev_used=lambda x: x["feature"].isin(prev))
+        RANK_PATH.parent.mkdir(parents=True, exist_ok=True)
+        out_rank.to_csv(RANK_PATH, index=False)
+
+# --- Integracja feedbacku z train_metrics.jsonl ---
+feedback_path = ROOT / 'models' / 'train_metrics.jsonl'
+last_sharpe = None
+last_calmar = None
+if feedback_path.exists():
+    try:
+        lines = feedback_path.read_text(encoding='utf-8').splitlines()
+        if lines:
+            last_entry = json.loads(lines[-1])
+            last_sharpe = last_entry.get('sharpe_daily')
+            last_calmar = last_entry.get('calmar')
+    except Exception:
+        pass
+# Dynamiczne zwiększenie max_lag jeśli Sharpe słaby
+if last_sharpe is not None and last_sharpe < 0.3:
+    args.max_lag = min(args.max_lag + 1, 5)
+    log(f'Dynamic max_lag zwiększony do {args.max_lag} z powodu słabego Sharpe.')
+        # wybór topK
+        topK = max(int(args.topK), 8)
+        chosen = diversify_select(rank_adj, prev, topK, MIN_NEW_RATIO)
+
+        # metryki zmian
+        prev_set, cur_set = set(prev or []), set(chosen or [])
+        kept = sorted(cur_set & prev_set)
+        new = sorted(cur_set - prev_set)
+        removed = sorted(prev_set - cur_set)
+        jac = jaccard(prev_set, cur_set)
+
+        spec_id = features_hash(chosen)
+        spec = {
+            "feature_columns": chosen,
+            "price_column": "close_norm" if "close_norm" in df.columns else "close",
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "spec_id": spec_id,
+            "max_lag": int(args.max_lag),
+        }
+
+        # raporty
+        SUMMARY_P.parent.mkdir(parents=True, exist_ok=True)
+        with SUMMARY_P.open("w", encoding="utf-8") as f:
+            f.write("# Feature Discovery Summary\n")
+            f.write(f"Generated at: {datetime.now().isoformat(timespec='seconds')}\n")
+            f.write(f"TopK: {topK}\n")
+            f.write(f"Prev size: {len(prev_set)}, Cur size: {len(cur_set)}\n")
+            f.write(f"Jaccard(prev,cur): {jac:.3f}\n")
+            f.write(f"Min new ratio enforced: {MIN_NEW_RATIO:.2f}\n\n-- KEPT --\n")
+            for x in kept:
+                f.write(f"{x}\n")
+            f.write("\n-- NEW --\n")
+            for x in new:
+                f.write(f"{x}\n")
+            f.write("\n-- REMOVED --\n")
+            for x in removed:
+                f.write(f"{x}\n")
+
+        HTML_P.parent.mkdir(parents=True, exist_ok=True)
+        rank_rel = str(Path(os.path.relpath(RANK_PATH, HTML_P.parent)))
+        HTML_P.write_text(
+            render_changes_html(kept, new, removed, jac, topK, spec_id, rank_rel),
+            encoding="utf-8",
+        )
+
+        # historia (zawsze)
+        save_history({"ts": datetime.now().isoformat(timespec="seconds"),
+                      "feature_columns": chosen, "spec_id": spec_id})
+
+        # LIVE-SAFE
+        live_universe = live_feature_universe(args.max_lag)
+        live_safe = [c for c in chosen if c in live_universe]
+        SPEC_LIVE.parent.mkdir(parents=True, exist_ok=True)
+        SPEC_LIVE.write_text(json.dumps({
+            "feature_columns": live_safe,
+            "price_column": spec["price_column"],
+            "generated_at": spec["generated_at"],
+            "spec_id": spec_id + "_live",
+            "max_lag": int(args.max_lag),
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        # aktualizacja głównej spec (gdy zmiana jest istotna)
+allow_update = True  # Zawsze aktualizujemy spec
+allow_update = True  # Zawsze aktualizujemy spec
+            SPEC_PATH.parent.mkdir(parents=True, exist_ok=True)
+            SPEC_PATH.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
+log("Spec updated unconditionally (adaptive mode).")
+            log(f"UPDATED spec -> {SPEC_PATH}, live -> {SPEC_LIVE}, "
+                f"rank -> {RANK_PATH}, summary -> {SUMMARY_P}, html -> {HTML_P}")
+            print("Feature discovery completed [UPDATE-SPEC].")
+        else:
+            log(f"SKIPPED spec update (mode={args.mode}, Jaccard={jac:.3f} >= {args.min_jaccard}); "
+                f"live -> {SPEC_LIVE}")
+            print("Feature discovery completed [RANK-ONLY].")
+
+    except Exception as e:
+        log(f"[ERROR] {e}")
+        log(traceback.format_exc())
+        raise
+
+
+if __name__ == "__main__":
+    main()
